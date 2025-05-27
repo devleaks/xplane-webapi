@@ -26,6 +26,7 @@ requires-python = ">=3.12"
 
 dependencies = [
     "ifaddr~=0.2",
+    "packaging~=25.0",
     "requests~=2.32",
     "simple-websocket~=1.1"
 ]
