@@ -1,0 +1,13 @@
+site_name: Python wrapper for X-Plane Web API
+
+theme:
+  name: "material"
+
+nav:
+  - Welcome: index.md
+  - API: api.md
+
+
+plugins:
+  - mkdocstrings
+

@@ -1,0 +1,82 @@
+# ###########################################
+#
+# Project
+#
+[project]
+name = "xplane-webapi"
+
+authors = [
+  { name="Pierre M.", email="pierre@devleaks.be" }
+]
+
+description = "Python Wrapper for Laminar Research X-Plane Web API"
+
+readme = "README.md"
+
+license = {file = "LICENCE"}
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Games/Entertainment :: Simulation",
+]
+
+requires-python = ">=3.12"
+
+dependencies = [
+    "ifaddr~=0.2",
+    "requests~=2.32",
+    "simple-websocket~=1.1"
+]
+
+[project.optional-dependencies]
+development = [
+    "types-requests",
+    "types-Werkzeug"
+]
+
+dynamic = [
+    "version"
+]
+
+[project.urls]
+Homepage = "https://devleaks.github.io/xplane-webapi/"
+Documentation = "https://devleaks.github.io/xplane-webapi/"
+Issues = "https://github.com/devleaks/xplane-webapi/issues"
+Source = "https://github.com/devleaks/xplane-webapi"
+
+
+# ###########################################
+#
+# Edit
+#
+[tool.ruff]
+line-length = 160
+docstring-code-format = true
+select = [
+    "E",
+    "F",
+    "W",
+]
+ignore = []
+
+[tool.black]
+line-length = 160
+
+[tool.flake8]
+max-line-length = 160
+
+# ###########################################
+#
+# Build
+#
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "VERSION"
+
+[tool.hatch.metadata]
+allow-direct-references = true
