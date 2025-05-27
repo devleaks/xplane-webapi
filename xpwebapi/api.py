@@ -86,7 +86,6 @@ class DatarefMeta(APIObjMeta):
 
     def __init__(self, name: str, value_type: str, is_writable: bool, **kwargs) -> None:
         APIObjMeta.__init__(self, name=name, ident=kwargs.get("id", -1))
-        self.name = name
         self.value_type = value_type
         self.is_writable = is_writable
 
@@ -199,9 +198,9 @@ class API(ABC):
         """URL for the REST API"""
         return self._url("http")
 
-    def dataref(self, path) -> Dataref:
+    def dataref(self, path, auto_save: bool = False) -> Dataref:
         """Create Dataref with current API"""
-        return Dataref(path=path, api=self)
+        return Dataref(path=path, api=self, auto_save=auto_save)
 
     def command(self, path) -> Command:
         """Create Command with current API"""
@@ -218,19 +217,19 @@ class API(ABC):
         if not force and obj._cached_meta is not None:
             return obj._cached_meta
         obj._cached_meta = None
-        payload = f"filter[name]={obj.name}"
+        payload = f"filter[name]={obj.path}"
         obj_type = "/datarefs" if type(obj) is Dataref else "/commands"
         url = self.rest_url + obj_type
         response = requests.get(url, params=payload)
-        respjson = response.json()
+        webapi_logger.info(f"GET {obj.path}: {url} = {response}")
         if response.status_code == 200:
-            webapi_logger.info(f"GET {obj.path}: {url} = {respjson}")
+            respjson = response.json()
             metadata = respjson[REST_KW.DATA.value]
             if len(metadata) > 0:
                 m0 = metadata[0]
                 obj._cached_meta = Cache.meta(**m0)
                 return obj._cached_meta
-        logger.error(f"{obj_type} {obj.name} could not get meta data through REST API")
+        logger.error(f"{obj_type} {obj.path} could not get meta data through REST API")
         return None
 
     @abstractmethod
@@ -337,10 +336,9 @@ class Dataref:
         self.auto_save = auto_save
 
         self.api = api
-        self.name = path
+        self.name = path # path with array index sim/some/values[4]
 
-        # path with array index sim/some/values[4]
-        self.path = path
+        self.path = path # path with array index sim/some/values[4]
         self.index = None  # sign is it not a selected array element
         if "[" in path:
             self.path = self.name[: self.name.find("[")]  # sim/some/values
@@ -502,11 +500,11 @@ class Dataref:
 class Command:
     """X-Plane Web API Command"""
 
-    def __init__(self, api: API, path: str, name: str | None = None, duration: float = 0.0):
+    def __init__(self, api: API, path: str, duration: float = 0.0):
         self._cached_meta = None
         self.api = api
         self.path = path  # some/command
-        self.name = name
+        self.name = path  # some/command
         self.duration = duration
 
     def __str__(self) -> str:
@@ -549,7 +547,7 @@ class Command:
         """Execute command through API supplied at creation"""
         return self.api.execute(self, duration=duration)
 
-    def monitor(self, on:bool = True) -> bool:
+    def monitor(self, on: bool = True) -> bool:
         """Monitor command activation through Websocket API"""
         if hasattr(self.api, "register_command_is_active_event"):
             return self.api.register_command_is_active_event(path=self.path, on=on)

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import socket
 import threading
 import logging

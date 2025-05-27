@@ -3,9 +3,14 @@ import sys
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
+import logging
 from typing import Any
 
 import xpwebapi
+
+FORMAT = "[%(asctime)s] %(levelname)s %(threadName)s %(filename)s:%(funcName)s:%(lineno)d: %(message)s"
+logging.basicConfig(level=logging.INFO, format=FORMAT, datefmt="%H:%M:%S")
+
 
 # REST API
 api = xpwebapi.rest_api(host="192.168.1.140", port=8080, api_version="v2")  # defaults: host="127.0.0.1", port=8086, api="/api", use_cache=False
@@ -16,25 +21,17 @@ print(api.capabilities)
 
 api.set_api_version(api_version="v2")
 
-dataref = api.dataref("dataref/path")
-
+dataref = api.dataref("sim/cockpit2/clock_timer/local_time_seconds")
 print(dataref)
 
-# dataref.value = 6
-# print(dataref)
-# dataref.write()
+# # dataref.value = 6
+# # print(dataref)
+# # dataref.write()
 
-# print(dataref)
-# dataref/path
-# id=12345
-# type=int
-# writable=True
+# command = api.command("toliss_airbus/lightcommands/BeaconToggle")
+# print(command)
+# command.execute()
 
 # sim/map/show_current
 mapview = api.command("sim/map/show_current")
-command = api.command("toliss_airbus/lightcommands/BeaconToggle")
-
-print(command)
-
-command.execute()
 mapview.execute()
