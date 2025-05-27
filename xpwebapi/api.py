@@ -514,6 +514,7 @@ class Command:
 
     @property
     def meta(self) -> CommandMeta | None:
+        """Meta data of command"""
         if self.api.use_cache:
             if self.api.all_commands is not None:
                 r = self.api.all_commands.get(self.path)
@@ -526,10 +527,12 @@ class Command:
 
     @property
     def valid(self) -> bool:
+        """Returns whether meta data for command was acquired sucessfully to carry on operations on it"""
         return self.meta is not None
 
     @property
     def ident(self) -> int | None:
+        """Get command identifier meta data"""
         if not self.valid:
             logger.error(f"command {self.path} not valid")
             return None
@@ -537,27 +540,21 @@ class Command:
 
     @property
     def description(self) -> str | None:
+        """Get command description as provided by X-Plane"""
         if not self.valid:
             return None
         return self.meta.description
 
-    # Rest
     def execute(self, duration: float = 0.0) -> bool:
+        """Execute command through API supplied at creation"""
         return self.api.execute(self, duration=duration)
 
-    # Websocket
-    def ws_execute(self) -> int:
-        return self.api.set_command_is_active_with_duration(path=self.path)
+    def monitor(self, on:bool = True) -> bool:
+        """Monitor command activation through Websocket API"""
+        if hasattr(self.api, "register_command_is_active_event"):
+            return self.api.register_command_is_active_event(path=self.path, on=on)
+        logger.error(f"{self.path}: not a websocket api")
+        return False
 
-    def monitor(self) -> int:
-        return self.register_command_is_active_event(path=self.path, on=True)
-
-    def unmonitor(self) -> int:
-        return self.register_command_is_active_event(path=self.path, on=False)
-
-    # REST or Websocket
-    def execute(self):
-        if self.api.use_rest:
-            self.rest_execute()
-        else:
-            self.ws_execute()
+    def unmonitor(self) -> bool:
+        return self.unmonitor(on=False)

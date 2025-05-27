@@ -7,7 +7,7 @@ import logging
 import json
 import time
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # Packaging is used in Cockpit to check driver versions
 from packaging.version import Version
@@ -30,8 +30,8 @@ XP_MAX_VERSION_STR = "12.1.4"
 # #############################################
 # WEBSOCKET API
 #
-class XPWebSocketAPI(XPRestAPI):
-    """Utility routines specific to WebSocket API
+class XPWebsocketAPI(XPRestAPI):
+    """Utility routines specific to Websocket API
 
     See https://developer.x-plane.com/article/x-plane-web-api/#Websockets_API.
     """
@@ -68,12 +68,12 @@ class XPWebSocketAPI(XPRestAPI):
 
     @property
     def ws_url(self) -> str:
-        """URL for the WebSocket API"""
+        """URL for the Websocket API"""
         return self._url("ws")
 
     @property
     def next_req(self) -> int:
-        """Provides request number for WebSocket requests"""
+        """Provides request number for Websocket requests"""
         self.req_number = self.req_number + 1
         return self.req_number
 
@@ -536,7 +536,7 @@ class XPWebSocketAPI(XPRestAPI):
 
         if self.ws_event.is_set():  # Thread for X-Plane datarefs
             self.ws_event.clear()
-            self.ws_thread = threading.Thread(target=self.ws_receiver, name="XPlane::WebSocket Listener")
+            self.ws_thread = threading.Thread(target=self.ws_receiver, name="XPlane::Websocket Listener")
             self.ws_thread.start()
             logger.info("websocket listener started")
         else:

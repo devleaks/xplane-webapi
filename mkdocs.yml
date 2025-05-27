@@ -2,10 +2,15 @@ site_name: Python wrapper for X-Plane Web API
 
 theme:
   name: "material"
+  logo: plane
 
 nav:
   - Welcome: index.md
-  - API: api.md
+  - Dataref: dataref.md
+  - Command: command.md
+  - REST API: rest_api.md
+  - Websocket API: ws_api.md
+  - X-Plane Beacon Monitor: beacon.md
 
 
 plugins:

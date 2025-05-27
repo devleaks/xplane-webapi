@@ -1,17 +1,17 @@
-# Welcome to MkDocs
+# Python wrapper for X-Plane Web API
 
-For full documentation visit [mkdocs.org](https://www.mkdocs.org).
+For full documentation visit [x-plane.com](https://developer.x-plane.com/article/x-plane-web-api/).
 
-## Commands
+## Structures
 
-* `mkdocs new [dir-name]` - Create a new project.
-* `mkdocs serve` - Start the live-reloading docs server.
-* `mkdocs build` - Build the documentation site.
-* `mkdocs -h` - Print help message and exit.
+- [Dataref](dataref.md)
+- [Command](command.md)
 
-## Project layout
+## API
 
-    mkdocs.yml    # The configuration file.
-    docs/
-        index.md  # The documentation homepage.
-        ...       # Other markdown pages, images and other files.
+- [REST API](rest_api.md)
+- [Webscket API](ws_api.md)
+
+## Utilities
+
+- [X-Plane Beacon Monitor](beacon.md)
