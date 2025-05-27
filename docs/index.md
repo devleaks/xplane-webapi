@@ -15,7 +15,7 @@ For full documentation visit [x-plane.com](https://developer.x-plane.com/article
 ## Utilities
 
 - [X-Plane Beacon Monitor](beacon.md)
-
+- [Auxiliary Classes](aux.md)
 
 # Installation
 

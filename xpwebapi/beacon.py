@@ -303,7 +303,7 @@ if __name__ == "__main__":
 
     def callback(connected: bool):
         print("reachable" if connected else "unreachable")
-        if beacon.connected:
+        if beacon.connected:  # beacon is bound to above declaration
             print(beacon.find_ip())
             print(beacon.same_host())
 

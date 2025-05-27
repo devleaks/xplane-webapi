@@ -72,7 +72,10 @@ class XPWebsocketAPI(XPRestAPI):
 
     @property
     def next_req(self) -> int:
-        """Provides request number for Websocket requests"""
+        """Provides request number for Websocket requests
+
+        Current request number is available through attribute `req_number`
+        """
         self.req_number = self.req_number + 1
         return self.req_number
 
@@ -81,6 +84,7 @@ class XPWebsocketAPI(XPRestAPI):
     #
     @property
     def connected(self) -> bool:
+        """Whether Websocket API is reachable"""
         res = self.ws is not None
         if not res and not self._already_warned > self.MAX_WARNING:
             if self._already_warned == self.MAX_WARNING:
@@ -91,6 +95,7 @@ class XPWebsocketAPI(XPRestAPI):
         return res
 
     def connect_websocket(self):
+        """Create Websocket if it is reachable"""
         if self.ws is None:
             try:
                 if super().connected:
@@ -107,6 +112,7 @@ class XPWebsocketAPI(XPRestAPI):
             logger.warning("already connected")
 
     def disconnect_websocket(self, silent: bool = False):
+        """Closes Websocket connection"""
         if self.ws is not None:
             self.ws.close()
             self.ws = None
@@ -223,8 +229,17 @@ class XPWebsocketAPI(XPRestAPI):
     # I/O
     #
     # Generic payload "send" function, unique
-    def send(self, payload: dict, mapping: dict = {}) -> int:
-        # Mapping is correspondance dataref_index=dataref_name
+    def send(self, payload: dict, mapping: dict = {}) -> int | bool:
+        """Send payload message through Websocket
+
+        Args:
+            payload (dict): message
+            mapping (dict): corresponding {idenfier: path} for printing/debugging
+
+        Returns:
+            bool if fails
+            request id if succeeded
+        """
         if self.connected:
             if payload is not None and len(payload) > 0:
                 req_id = self.next_req
@@ -239,14 +254,21 @@ class XPWebsocketAPI(XPRestAPI):
             else:
                 logger.warning("no payload")
         logger.warning("not connected")
-        return -1
+        return False
 
     # Dataref operations
     #
     # Note: It is not possible get the the value of a dataref just once
     # through web service. No get_dataref_value().
     #
-    def set_dataref_value(self, path, value) -> int:
+    def set_dataref_value(self, path, value) -> bool | int:
+        """Set dataref value through Websocket
+
+        Returns:
+            bool if fails
+            request id if succeeded
+        """
+
         def split_dataref_path(path):
             name = path
             index = -1
@@ -273,7 +295,7 @@ class XPWebsocketAPI(XPRestAPI):
             payload[REST_KW.PARAMS.value][REST_KW.DATAREFS.value][0][REST_KW.INDEX.value] = index
         return self.send(payload, mapping)
 
-    def register_bulk_dataref_value_event(self, datarefs, on: bool = True) -> bool:
+    def register_bulk_dataref_value_event(self, datarefs, on: bool = True) -> bool | int:
         drefs = []
         for dataref in datarefs.values():
             if type(dataref) is list:
@@ -306,8 +328,7 @@ class XPWebsocketAPI(XPRestAPI):
                 else:
                     mapping[d.ident] = d.name
             action = "dataref_subscribe_values" if on else "dataref_unsubscribe_values"
-            err = self.send({REST_KW.TYPE.value: action, REST_KW.PARAMS.value: {REST_KW.DATAREFS.value: drefs}}, mapping)
-            return err != -1
+            return self.send({REST_KW.TYPE.value: action, REST_KW.PARAMS.value: {REST_KW.DATAREFS.value: drefs}}, mapping)
         if on:
             action = "register" if on else "unregister"
             logger.warning(f"no bulk datarefs to {action}")
@@ -315,7 +336,7 @@ class XPWebsocketAPI(XPRestAPI):
 
     # Command operations
     #
-    def register_command_is_active_event(self, path: str, on: bool = True) -> int:
+    def register_command_is_active_event(self, path: str, on: bool = True) -> bool | int:
         cmdref = self.get_command_meta_by_name(path)
         if cmdref is not None:
             mapping = {cmdref.ident: cmdref.name}
@@ -324,7 +345,7 @@ class XPWebsocketAPI(XPRestAPI):
         logger.warning(f"command {path} not found in X-Plane commands database")
         return -1
 
-    def register_bulk_command_is_active_event(self, paths, on: bool = True) -> int:
+    def register_bulk_command_is_active_event(self, paths, on: bool = True) -> bool | int:
         cmds = []
         mapping = {}
         for path in paths:
@@ -343,7 +364,7 @@ class XPWebsocketAPI(XPRestAPI):
             logger.warning(f"no bulk command active to {action}")
         return -1
 
-    def set_command_is_active_with_duration(self, path: str, duration: float = 0.0) -> int:
+    def set_command_is_active_with_duration(self, path: str, duration: float = 0.0) -> bool | int:
         cmdref = self.get_command_meta_by_name(path)
         if cmdref is not None:
             return self.send(
@@ -357,7 +378,7 @@ class XPWebsocketAPI(XPRestAPI):
         logger.warning(f"command {path} not found in X-Plane commands database")
         return -1
 
-    def set_command_is_active_without_duration(self, path: str, active: bool) -> int:
+    def set_command_is_active_without_duration(self, path: str, active: bool) -> bool | int:
         cmdref = self.get_command_meta_by_name(path)
         if cmdref is not None:
             return self.send(
@@ -369,17 +390,17 @@ class XPWebsocketAPI(XPRestAPI):
         logger.warning(f"command {path} not found in X-Plane commands database")
         return -1
 
-    def set_command_is_active_true_without_duration(self, path) -> int:
+    def set_command_is_active_true_without_duration(self, path) -> bool | int:
         return self.set_command_is_active_without_duration(path=path, active=True)
 
-    def set_command_is_active_false_without_duration(self, path) -> int:
+    def set_command_is_active_false_without_duration(self, path) -> bool | int:
         return self.set_command_is_active_without_duration(path=path, active=False)
 
     # ################################
     # Start/Run/Stop
     #
     def ws_receiver(self):
-        """Read and decode websocket messages and enqueue events"""
+        """Read and decode websocket messages and calls back"""
         logger.debug("starting websocket listener..")
         self.RECEIVE_TIMEOUT = 1  # when not connected, checks often
         total_reads = 0
@@ -529,6 +550,7 @@ class XPWebsocketAPI(XPRestAPI):
         logger.info("..websocket listener terminated")
 
     def start(self, release: bool = True):
+        """Start Websocket monitoring"""
         if not self.connected:
             logger.warning("not connected. cannot not start.")
             return
@@ -548,6 +570,7 @@ class XPWebsocketAPI(XPRestAPI):
         logger.info(f"{type(self).__name__} started")
 
     def stop(self):
+        """Stop Websocket monitoring"""
         if not self.ws_event.is_set():
             # if self.all_datarefs is not None:
             #     self.all_datarefs.save("datarefs.json")
@@ -566,27 +589,16 @@ class XPWebsocketAPI(XPRestAPI):
             logger.debug("websocket listener not running")
 
     def reset_connection(self):
+        """Reset Websocket connection
+
+        Stop existing Websocket connect and create a new one.
+        Initialize and load cache if requested.
+        If datarefs/commands identifier have changed, reassign new identifiers.
+        """
         self.stop()
         self.disconnect()
         self.connect()
         self.start()
-
-    def terminate(self):
-        logger.debug(f"currently {'not ' if self.ws_event is None else ''}running. terminating..")
-        logger.info("terminating..")
-        # sends instructions to stop sending values/events
-        # logger.info("..request to stop sending value updates and events..")
-        # self.remove_all_simulator_variables_to_monitor()
-        # self.remove_all_simulator_events_to_monitor()
-        # stop receiving events from similator (websocket)
-        logger.info("..stopping websocket listener..")
-        self.stop()
-        # cleanup/reset monitored variables or events
-        # logger.info("..deleting references to datarefs..")
-        # self.cleanup()
-        logger.info("..disconnecting from simulator..")
-        self.disconnect()
-        logger.info("..terminated")
 
     def _add_datarefs_to_monitor(self, datarefs: dict, reason: str | None = None):
         if not self.connected:
@@ -607,7 +619,7 @@ class XPWebsocketAPI(XPRestAPI):
                         bulk[ident].append(d)
                     else:
                         bulk[ident] = d
-            d.monitor()
+            d.inc_monitor()
 
         if len(bulk) > 0:
             self.register_bulk_dataref_value_event(datarefs=bulk, on=True)
@@ -634,7 +646,7 @@ class XPWebsocketAPI(XPRestAPI):
         bulk = {}
         for d in datarefs.values():
             if d.is_monitored:
-                if not d.unmonitor():  # will be decreased by 1 in super().remove_simulator_variable_to_monitor()
+                if not d.dec_monitor():  # will be decreased by 1 in super().remove_simulator_variable_to_monitor()
                     ident = d.ident
                     if ident is not None:
                         if d.is_array and d.index is not None:
@@ -674,24 +686,24 @@ class XPWebsocketAPI(XPRestAPI):
             time.sleep(1)
         logger.debug("..connected")
 
-    def monitor_dataref(self, dataref: Dataref):
-        self._add_datarefs_to_monitor(datarefs={dataref.path: dataref}, reason="monitor_dataref")
+    def monitor_dataref(self, dataref: Dataref) -> bool | int:
+        return self._add_datarefs_to_monitor(datarefs={dataref.path: dataref}, reason="monitor_dataref")
 
-    def unmonitor_dataref(self, dataref: Dataref):
-        self._remove_datarefs_to_monitor(datarefs={dataref.path: dataref}, reason="unmonitor_dataref")
+    def unmonitor_dataref(self, dataref: Dataref) -> bool | int:
+        return self._remove_datarefs_to_monitor(datarefs={dataref.path: dataref}, reason="unmonitor_dataref")
 
-    def monitor_command_active(self, command: Command):
-        self.register_command_is_active_event(path=command.path, on=True)
+    def monitor_command_active(self, command: Command) -> bool | int:
+        return self.register_command_is_active_event(path=command.path, on=True)
 
-    def unmonitor_command_active(self, command: Command):
-        self.register_command_is_active_event(path=command.path, on=False)
+    def unmonitor_command_active(self, command: Command) -> bool | int:
+        return self.register_command_is_active_event(path=command.path, on=False)
 
-    def write_dataref(self, dataref: Dataref) -> bool:
+    def write_dataref(self, dataref: Dataref) -> bool | int:
         if self.use_rest:
             return super().write_datatef(dataref=dataref)
         return self.set_dataref_value(path=dataref.name, value=dataref._new_value)
 
-    def execute(self, command: Command, duration: float = 0.0) -> bool:
+    def execute(self, command: Command, duration: float = 0.0) -> bool | int:
         if self.use_rest:
             return super().execute(command=command, duration=duration)
         return self.set_command_is_active_with_duration(path=command.path, duration=duration)

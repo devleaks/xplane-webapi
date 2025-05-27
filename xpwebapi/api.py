@@ -336,9 +336,9 @@ class Dataref:
         self.auto_save = auto_save
 
         self.api = api
-        self.name = path # path with array index sim/some/values[4]
+        self.name = path  # path with array index sim/some/values[4]
 
-        self.path = path # path with array index sim/some/values[4]
+        self.path = path  # path with array index sim/some/values[4]
         self.index = None  # sign is it not a selected array element
         if "[" in path:
             self.path = self.name[: self.name.find("[")]  # sim/some/values
@@ -438,11 +438,11 @@ class Dataref:
         """How many times dataref is monitored"""
         return self._monitored
 
-    def monitor(self):
+    def inc_monitor(self):
         """Register dataref for monitoring"""
         self._monitored = self._monitored + 1
 
-    def unmonitor(self) -> bool:
+    def dec_monitor(self) -> bool:
         """Unregister dataref from monitoring
 
         Returns
@@ -495,6 +495,20 @@ class Dataref:
                 logger.warning(f"unknown value type for {self.name}: {type(raw_value)}, {raw_value}, expected {self.value_type}")
 
         return raw_value
+
+    def monitor(self) -> bool:
+        """Monitor dataref value change"""
+        if hasattr(self.api, "monitor_dataref"):
+            return self.api.monitor_dataref(dataref=self)
+        logger.error(f"{self.path}: not a websocket api")
+        return False
+
+    def unmonitor(self) -> bool:
+        """Unmonitor dataref value change"""
+        if hasattr(self.api, "unmonitor_dataref"):
+            return self.api.unmonitor_dataref(dataref=self)
+        logger.error(f"{self.path}: not a websocket api")
+        return False
 
 
 class Command:
@@ -555,4 +569,5 @@ class Command:
         return False
 
     def unmonitor(self) -> bool:
+        """Suppress monitor command activation through Websocket API"""
         return self.unmonitor(on=False)

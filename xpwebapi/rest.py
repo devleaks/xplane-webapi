@@ -1,6 +1,7 @@
 import logging
 import base64
 from datetime import timedelta
+from typing import Any
 
 import requests
 
@@ -49,6 +50,7 @@ class XPRestAPI(API):
 
     @property
     def use_cache(self) -> bool:
+        """Use cache for object meta data"""
         return self._use_cache
 
     @use_cache.setter
@@ -58,6 +60,10 @@ class XPRestAPI(API):
 
     @property
     def uptime(self) -> float:
+        """Time X-Plane has been running in seconds since start
+
+        Value is fetched from simulator dataref sim/time/total_running_time_sec
+        """
         if self._running_time is not None:
             r = self._running_time.value
             if r is not None:
@@ -66,7 +72,8 @@ class XPRestAPI(API):
 
     @property
     def connected(self) -> bool:
-        """Important call that checks whether API is reachable
+        """Whether API is reachable
+
         API may not be reachable if:
          - X-Plane version before 12.1.4,
          - X-Plane is not running
@@ -93,7 +100,7 @@ class XPRestAPI(API):
 
     @property
     def capabilities(self) -> dict:
-        # Guess capabilties and caches it
+        """Fetches API capabilties and caches it"""
         if len(self._capabilities) > 0:
             return self._capabilities
         if self.connected:
@@ -122,12 +129,20 @@ class XPRestAPI(API):
 
     @property
     def xp_version(self) -> str | None:
+        """Returns reported X-Plane version from simulator"""
         a = self._capabilities.get("x-plane")
         if a is None:
             return None
         return a.get("version")
 
     def set_api_version(self, api_version: str | None = None):
+        """Set API version
+
+        Version is often specified with a v# short string.
+        If no version is supplied, try to take the latest version available.
+        Version numbering is not formally specified, therefore alphabetical ordering of strings if used.
+        Warning: Version v10 < v2.
+        """
         capabilities = self.capabilities
         if len(capabilities) == 0:
             logger.warning("no capabilities, cannot check API version")
@@ -162,6 +177,16 @@ class XPRestAPI(API):
 
     # Cache
     def reload_caches(self, force: bool = False, save: bool = False):
+        """Reload meta data caches
+
+        Must be performed regularly, if aircraft changed, etc.
+
+        Later, Laminar Research has plan for a notification of additing of datarefs
+
+        Args:
+            force (bool): Force reloading (default: `False`)
+            save (bool): Save raw meta data in JSON formatted files (default: `False`)
+        """
         MINTIME_BETWEEN_RELOAD = 10  # seconds
         if not force:
             if self._last_updated != 0:
@@ -197,6 +222,7 @@ class XPRestAPI(API):
         )
 
     def rebuild_dataref_ids(self):
+        """Rebuild dataref idenfier index"""
         if self.all_datarefs.has_data and len(self._dataref_by_id) > 0:
             self._dataref_by_id = {d.ident: d for d in self._dataref_by_id.values()}
             logger.info("dataref ids rebuilt")
@@ -204,18 +230,28 @@ class XPRestAPI(API):
         logger.warning("no data to rebuild dataref ids")
 
     def get_dataref_meta_by_name(self, path: str) -> DatarefMeta | None:
+        """Get dataref meta data by dataref name"""
         return self.all_datarefs.get_by_name(path) if self.all_datarefs is not None else None
 
     def get_dataref_meta_by_id(self, ident: int) -> DatarefMeta | None:
+        """Get dataref meta data by dataref identifier"""
         return self.all_datarefs.get_by_id(ident) if self.all_datarefs is not None else None
 
     def get_command_meta_by_name(self, path: str) -> CommandMeta | None:
+        """Get command meta data by command path"""
         return self.all_commands.get_by_name(path) if self.all_commands is not None else None
 
     def get_command_meta_by_id(self, ident: int) -> CommandMeta | None:
+        """Get command meta data by command identifier"""
         return self.all_commands.get_by_id(ident) if self.all_commands is not None else None
 
     def write_dataref(self, dataref: Dataref) -> bool:
+        """Write single dataref value through REST API
+
+        Returns:
+
+        bool: success of operation
+        """
         if not self.connected:
             logger.warning("not connected")
             return None
@@ -256,6 +292,12 @@ class XPRestAPI(API):
         return False
 
     def execute(self, command: Command, duration: float = 0.0) -> bool:
+        """Executes Command through REST API
+
+        Returns:
+
+        bool: success of operation
+        """
         if not self.connected:
             logger.warning("not connected")
             return False
@@ -276,7 +318,11 @@ class XPRestAPI(API):
         logger.error(f"rest_execute: {response}, {data}")
         return False
 
-    def dataref_value(self, dataref: Dataref) -> bool:
+    def dataref_value(self, dataref: Dataref) -> Any:
+        """Get dataref value through REST API
+
+        Value is not stored or cached.
+        """
         if not self.connected:
             logger.warning("not connected")
             return None
