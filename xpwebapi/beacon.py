@@ -38,10 +38,10 @@ def list_my_ips() -> List[str]:
 # property names match X-Plane's
 @dataclass
 class BeaconData:
-    IP: str
-    Port: int
+    host: str
+    port: int
     hostname: str
-    XPlaneVersion: int
+    xplane_version: int
     role: int
 
 
@@ -88,8 +88,7 @@ class XPBeaconMonitor:
     def __init__(self):
         # Open a UDP Socket to receive on Port 49000
         self.socket = None
-        self.beacon_data = {}
-        self.beacon: BeaconData | None = None
+        self.data: BeaconData | None = None
         self.should_not_connect: threading.Event | None = None
         self.connect_thread: threading.Thread | None = None
         self._already_warned = 0
@@ -100,7 +99,7 @@ class XPBeaconMonitor:
     @property
     def connected(self) -> bool:
         """Returns connection status"""
-        res = BEACON_DATA.IP.value in self.beacon_data.keys()
+        res = self.data is not None
         if not res and not self._already_warned > self.MAX_WARNING:
             if self._already_warned == self.MAX_WARNING:
                 logger.warning("no connection (last warning)")
@@ -132,7 +131,7 @@ class XPBeaconMonitor:
             self.socket = None
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-        self.beacon_data = {}
+        self.data = None
 
         # open socket for multicast group.
         # this socker is for getting the beacon, it can be closed when beacon is found.
@@ -189,12 +188,7 @@ class XPBeaconMonitor:
                 hostname = packet[21:-1]  # the hostname of the computer
                 hostname = hostname[0 : hostname.find(0)]
                 if beacon_major_version == 1 and beacon_minor_version <= 2 and application_host_id == 1:
-                    self.beacon_data[BEACON_DATA.IP.value] = sender[0]
-                    self.beacon_data[BEACON_DATA.PORT.value] = port
-                    self.beacon_data[BEACON_DATA.HOSTNAME.value] = hostname.decode()
-                    self.beacon_data[BEACON_DATA.XPVERSION.value] = xplane_version_number
-                    self.beacon_data[BEACON_DATA.XPROLE.value] = role
-                    self.beacon = BeaconData(IP=sender[0], Port=port, hostname=hostname.decode(), XPlaneVersion=xplane_version_number, role=role)
+                    self.data = BeaconData(host=sender[0], port=port, hostname=hostname.decode(), xplane_version=xplane_version_number, role=role)
                     logger.info(f"XPlane Beacon Version: {beacon_major_version}.{beacon_minor_version}.{application_host_id}")
                 else:
                     logger.warning(f"XPlane Beacon Version not supported: {beacon_major_version}.{beacon_minor_version}.{application_host_id}")
@@ -206,7 +200,7 @@ class XPBeaconMonitor:
         finally:
             sock.close()
 
-        return self.beacon
+        return self.data
 
     def connect_loop(self):
         """
@@ -223,19 +217,17 @@ class XPBeaconMonitor:
                     if self.connected:
                         self.status = 2
                         self._already_warned = 0
-                        logger.info(f"beacon: {self.beacon_data}")
+                        logger.info(f"beacon: {self.data}")
                         self.callback(True)  # connected
                 except XPlaneVersionNotSupported:
-                    self.beacon_data = {}
-                    self.beacon = None
+                    self.data = None
                     logger.error("..X-Plane Version not supported..")
                 except XPlaneIpNotFound:
                     if self.status == 2:
                         logger.warning("disconnected")
                         self.status = 1
                         self.callback(False)  # disconnected
-                    self.beacon_data = {}
-                    self.beacon = None
+                    self.data = None
                     if cnt % XPBeaconMonitor.WARN_FREQ == 0:
                         logger.error(f"..X-Plane instance not found on local network.. ({datetime.now().strftime('%H:%M:%S')})")
                     cnt = cnt + 1
@@ -256,7 +248,7 @@ class XPBeaconMonitor:
         """Starts beacon monitor"""
         if self.should_not_connect is None:
             self.should_not_connect = threading.Event()
-            self.connect_thread = threading.Thread(target=self.connect_loop, name="X-Plane Beacon Monitor")
+            self.connect_thread = threading.Thread(target=self.connect_loop, name="XPlane::Beacon Monitor")
             self.connect_thread.start()
             logger.debug("connect_loop started")
         else:
@@ -266,8 +258,7 @@ class XPBeaconMonitor:
         """Ends beacon monitor"""
         if self.should_not_connect is not None:
             logger.debug("disconnecting..")
-            self.beacon_data = {}
-            self.beacon = None
+            self.data = None
             self.should_not_connect.set()
             wait = XPBeaconMonitor.RECONNECT_TIMEOUT
             logger.debug(f"..asked to stop connect_loop.. (this may last {wait} secs.)")
@@ -280,8 +271,7 @@ class XPBeaconMonitor:
             logger.debug("..disconnected")
         else:
             if self.connected:
-                self.beacon_data = {}
-                self.beacon = None
+                self.data = None
                 logger.debug("..connect_loop not running..disconnected")
             else:
                 logger.debug("..not connected")
@@ -289,8 +279,8 @@ class XPBeaconMonitor:
     def same_host(self) -> bool:
         """Attempt to determine if X-Plane is running on local host or remote host"""
         if self.connected:
-            r = self.beacon_data[BEACON_DATA.IP.value] in self.my_ips
-            logger.debug(f"{self.beacon_data[BEACON_DATA.IP.value]}{'' if r else ' not'} in {self.my_ips}")
+            r = self.data.host in self.my_ips
+            logger.debug(f"{self.data.host}{'' if r else ' not'} in {self.my_ips}")
             return r
         return False
 

@@ -152,7 +152,26 @@ class API(ABC):
     """API Abstract class with connection information"""
 
     def __init__(self, host: str, port: int, api: str, api_version: str) -> None:
-        super().__init__()
+        self.set_network(host=host, port=port, api=api, api_version=api_version)
+        self._use_rest = True  # only option on startup
+
+    @property
+    def use_rest(self) -> bool:
+        """Should use REST API for some purpose"""
+        return self._use_rest
+
+    @use_rest.setter
+    def use_rest(self, use_rest):
+        self._use_rest = use_rest
+
+    @property
+    @abstractmethod
+    def connected(self) -> bool:
+        """Whether X-Plane API is reachable through this instance"""
+        return False
+
+    def set_network(self, host: str, port: int, api: str, api_version: str):
+        """Set network and API parameters for connection"""
         self.host = host
         self.port = port
         self._api_root_path = api
@@ -165,21 +184,6 @@ class API(ABC):
         self._api_version = api_version  # /v1, /v2, to be appended to URL
         if not self._api_version.startswith("/"):
             self._api_version = "/" + self._api_version
-
-        self._use_rest = True  # only option on startup
-
-    @property
-    def use_rest(self) -> bool:
-        """Should use REST API for some purpose"""
-        return self._use_rest
-
-    @use_rest.setter
-    def use_rest(self, use_rest):
-        self._use_rest = use_rest
-
-    @abstractmethod
-    def connected(self) -> bool:
-        return False
 
     def _url(self, protocol: str) -> str:
         """URL builder for the API
@@ -420,6 +424,13 @@ class Dataref:
             return False
         return self.value_type in [DATAREF_DATATYPE.INTARRAY.value, DATAREF_DATATYPE.FLOATARRAY.value]
 
+    @property
+    def selected_indices(self) -> bool:
+        if not self.valid:
+            logger.error(f"dataref {self.path} not valid")
+            return False
+        return len(self.meta.indices) > 0
+
     def write(self) -> bool:
         """Write new value to X-Plane through REST API
 
@@ -559,7 +570,7 @@ class Command:
 
     def execute(self, duration: float = 0.0) -> bool:
         """Execute command through API supplied at creation"""
-        return self.api.execute(self, duration=duration)
+        return self.api.execute(command=self, duration=duration)
 
     def monitor(self, on: bool = True) -> bool:
         """Monitor command activation through Websocket API"""

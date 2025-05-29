@@ -291,7 +291,7 @@ class XPRestAPI(API):
         logger.error(f"rest_write: {response} {response.reason} {response.text}")
         return False
 
-    def execute(self, command: Command, duration: float = 0.0) -> bool:
+    def execute(self, command: Command, duration: float = 0.0) -> bool | int:
         """Executes Command through REST API
 
         Returns:
@@ -324,7 +324,7 @@ class XPRestAPI(API):
         Value is not stored or cached.
         """
         if not self.connected:
-            logger.warning("not connected")
+            logger.debug("not connected")
             return None
         if not dataref.valid:
             logger.error(f"dataref {dataref.path} not valid")
@@ -338,5 +338,5 @@ class XPRestAPI(API):
                 return base64.b64decode(respjson[REST_KW.DATA.value]).decode("ascii").replace("\u0000", "")
             return respjson[REST_KW.DATA.value]
         webapi_logger.info(f"ERROR {dataref.path}: {response} {response.reason} {response.text}")
-        logger.error(f"rest_value: {response} {response.reason} {response.text}")
+        logger.error(f"dataref_value: {response} {response.reason} {response.text}")
         return None

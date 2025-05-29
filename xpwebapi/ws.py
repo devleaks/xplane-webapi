@@ -7,6 +7,7 @@ import json
 import time
 
 from datetime import datetime
+from typing import Tuple, List, Dict
 
 # Packaging is used in Cockpit to check driver versions
 from packaging.version import Version
@@ -18,7 +19,7 @@ from .rest import XPRestAPI
 
 # local logging
 logger = logging.getLogger(__name__)
-# logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.DEBUG)
 
 XP_MIN_VERSION = 121400
 XP_MIN_VERSION_STR = "12.1.4"
@@ -43,7 +44,7 @@ class XPWebsocketAPI(XPRestAPI):
         # Open a UDP Socket to receive on Port 49000
         XPRestAPI.__init__(self, host=host, port=port, api=api, api_version=api_version, use_cache=True)
 
-        self.use_rest = use_rest
+        self.use_rest = use_rest  # setter in API
 
         hostname = socket.gethostname()
         self.local_ip = socket.gethostbyname(hostname)
@@ -52,6 +53,7 @@ class XPWebsocketAPI(XPRestAPI):
         self.ws_event = threading.Event()
         self.ws_event.set()  # means it is off
         self.ws_thread = None
+
 
         self.req_number = 0
         self._requests = {}
@@ -62,8 +64,9 @@ class XPWebsocketAPI(XPRestAPI):
         self._stats = {}
 
         #
-        self.on_dataref_update = None
-        self.on_command_active = None
+        self.on_start = None  # func(connected: bool)
+        self.on_dataref_update = None  # func(dataref:str, value)
+        self.on_command_active = None  # func(command:str, active: bool)
 
     @property
     def ws_url(self) -> str:
@@ -85,14 +88,14 @@ class XPWebsocketAPI(XPRestAPI):
     @property
     def connected(self) -> bool:
         """Whether Websocket API is reachable"""
-        res = self.ws is not None
-        if not res and not self._already_warned > self.MAX_WARNING:
+        res = self.ws is None
+        if res and self._already_warned <= self.MAX_WARNING:
             if self._already_warned == self.MAX_WARNING:
                 logger.warning("no connection (last warning)")
             else:
                 logger.warning("no connection")
             self._already_warned = self._already_warned + 1
-        return res
+        return not res
 
     def connect_websocket(self):
         """Create Websocket if it is reachable"""
@@ -401,7 +404,7 @@ class XPWebsocketAPI(XPRestAPI):
     #
     def ws_receiver(self):
         """Read and decode websocket messages and calls back"""
-        logger.debug("starting websocket listener..")
+        logger.info("starting websocket listener..")
         self.RECEIVE_TIMEOUT = 1  # when not connected, checks often
         total_reads = 0
         to_count = 0
@@ -567,6 +570,8 @@ class XPWebsocketAPI(XPRestAPI):
         # then reload datarefs from current page of each deck
         self.reload_caches()
         self.rebuild_dataref_ids()
+        if self.on_start is not None:
+            self.on_start(connected=self.connected)
         logger.info(f"{type(self).__name__} started")
 
     def stop(self):
@@ -600,15 +605,24 @@ class XPWebsocketAPI(XPRestAPI):
         self.connect()
         self.start()
 
-    def _add_datarefs_to_monitor(self, datarefs: dict, reason: str | None = None):
+    # Interface
+    def wait_connection(self):
+        logger.debug("connecting..")
+        while not self.connected:
+            logger.debug("..waiting for connection..")
+            time.sleep(1)
+        logger.debug("..connected")
+
+    def monitor_datarefs(self, datarefs: dict, reason: str | None = None) -> Tuple[int|bool, Dict]:
         if not self.connected:
             logger.debug(f"would add {datarefs.keys()}")
-            return
+            return (False, {})
         if len(datarefs) == 0:
             logger.debug("no dataref to add")
-            return
+            return (False, {})
         # Add those to monitor
         bulk = {}
+        effectives = {}
         for d in datarefs.values():
             if not d.is_monitored:
                 ident = d.ident
@@ -620,9 +634,11 @@ class XPWebsocketAPI(XPRestAPI):
                     else:
                         bulk[ident] = d
             d.inc_monitor()
+            effectives[d.name] = d
 
+        ret = 0
         if len(bulk) > 0:
-            self.register_bulk_dataref_value_event(datarefs=bulk, on=True)
+            ret = self.register_bulk_dataref_value_event(datarefs=bulk, on=True)
             self._dataref_by_id = self._dataref_by_id | bulk
             dlist = []
             for d in bulk.values():
@@ -631,21 +647,24 @@ class XPWebsocketAPI(XPRestAPI):
                         dlist.append(d1.name)
                 else:
                     dlist.append(d.name)
-            logger.debug(f">>>>> add_datarefs_to_monitor: {reason}: added {dlist}")
+            logger.debug(f">>>>> monitor_datarefs: {reason}: added {dlist}")
         else:
             logger.debug("no dataref to add")
+        return ret, effectives
 
-    def _remove_datarefs_to_monitor(self, datarefs: dict, reason: str | None = None):
-        if not self.connected and len(self.simulator_variable_to_monitor) > 0:
-            logger.debug(f"would remove {datarefs.keys()}/{self._max_datarefs_monitored}")
-            return
+    def unmonitor_datarefs(self, datarefs: dict, reason: str | None = None) -> Tuple[int|bool, Dict]:
+        if not self.connected:
+            logger.debug(f"would remove {datarefs.keys()}")
+            return (False, {})
         if len(datarefs) == 0:
             logger.debug("no variable to remove")
-            return
+            return (False, {})
         # Add those to monitor
         bulk = {}
+        effectives = {}
         for d in datarefs.values():
             if d.is_monitored:
+                effectives[d.name] = d
                 if not d.dec_monitor():  # will be decreased by 1 in super().remove_simulator_variable_to_monitor()
                     ident = d.ident
                     if ident is not None:
@@ -660,8 +679,9 @@ class XPWebsocketAPI(XPRestAPI):
             else:
                 logger.debug(f"no need to remove {d.name}, not monitored")
 
+        ret = 0
         if len(bulk) > 0:
-            self.register_bulk_dataref_value_event(datarefs=bulk, on=False)
+            ret = self.register_bulk_dataref_value_event(datarefs=bulk, on=False)
             for i in bulk.keys():
                 if i in self._dataref_by_id:
                     del self._dataref_by_id[i]
@@ -674,23 +694,19 @@ class XPWebsocketAPI(XPRestAPI):
                         dlist.append(d1.name)
                 else:
                     dlist.append(d.name)
-            logger.debug(f">>>>> remove_datarefs_to_monitor: {reason}: removed {dlist}")
+            logger.debug(f">>>>> unmonitor_datarefs: {reason}: removed {dlist}")
         else:
-            logger.debug("no variable to remove")
+            logger.debug("no dataref to remove")
 
-    # Interface
-    def wait_connection(self):
-        logger.debug("connecting..")
-        while not self.connected:
-            logger.debug("..waiting for connection..")
-            time.sleep(1)
-        logger.debug("..connected")
+        return ret, effectives
 
     def monitor_dataref(self, dataref: Dataref) -> bool | int:
-        return self._add_datarefs_to_monitor(datarefs={dataref.path: dataref}, reason="monitor_dataref")
+        ret = self.monitor_datarefs(datarefs={dataref.path: dataref}, reason="monitor_dataref")
+        return ret[0]
 
     def unmonitor_dataref(self, dataref: Dataref) -> bool | int:
-        return self._remove_datarefs_to_monitor(datarefs={dataref.path: dataref}, reason="unmonitor_dataref")
+        ret = self.unmonitor_datarefs(datarefs={dataref.path: dataref}, reason="unmonitor_dataref")
+        return ret[0]
 
     def monitor_command_active(self, command: Command) -> bool | int:
         return self.register_command_is_active_event(path=command.path, on=True)
