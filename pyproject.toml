@@ -23,6 +23,7 @@ classifiers = [
 ]
 
 requires-python = ">=3.12"
+# (using type)
 
 dependencies = [
     "ifaddr~=0.2",

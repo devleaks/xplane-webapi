@@ -10,6 +10,8 @@ from typing import List
 
 import requests
 
+type DatarefValueType = bool | str | int | float
+
 # local logger
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
@@ -241,11 +243,11 @@ class API(ABC):
         return False
 
     @abstractmethod
-    def dataref_value(self, dataref: Dataref) -> bool:
+    def dataref_value(self, dataref: Dataref) -> DatarefValueType:
         return False
 
     @abstractmethod
-    def execute(self, command: Command) -> bool:
+    def execute(self, command: Command, duration: float = 0.0) -> bool | int:
         return False
 
 

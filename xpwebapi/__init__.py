@@ -3,6 +3,7 @@ from .beacon import XPBeaconMonitor
 from .rest import XPRestAPI
 from .ws import XPWebsocketAPI
 
+
 def beacon():
     return XPBeaconMonitor()
 
@@ -15,4 +16,4 @@ def ws_api(**kwargs):
     return XPWebsocketAPI(**kwargs)
 
 
-version = "0.2.0"
+version = "0.3.0"

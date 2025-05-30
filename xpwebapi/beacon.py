@@ -67,6 +67,7 @@ class XPBeaconMonitor:
     whenever the reachability status changes.
 
     Usage;
+    ```python
     from xpwebapi import XPBeaconMonitor
 
     def callback(connected: bool):
@@ -75,6 +76,7 @@ class XPBeaconMonitor:
     beacon = XPBeaconMonitor()
     beacon.set_callback(callback)
     beacon.connect()
+    ```
     """
 
     # constants
@@ -96,24 +98,19 @@ class XPBeaconMonitor:
         self.my_ips = list_my_ips()
         self.status = 0
 
-    @property
-    def connected(self) -> bool:
-        """Returns connection status"""
-        res = self.data is not None
-        if not res and not self._already_warned > self.MAX_WARNING:
-            if self._already_warned == self.MAX_WARNING:
-                logger.warning("no connection (last warning)")
-            else:
-                logger.warning("no connection")
-            self._already_warned = self._already_warned + 1
-        return res
-
-    def set_callback(self, callback: Callable | None = None):
-        """Set callback function"""
-        self._callback = callback
-
+    # ################################
+    # Internal functions
+    #
     def callback(self, connected):
-        """Execute callback function if supplied"""
+        """Execute callback function if supplied
+
+        Callback function prototype
+        ```python
+        callback(connected: bool)
+        ```
+
+        Connected is True is beacon is detected at regular interval, False otherwise
+        """
         if self._callback is not None:
             self._callback(connected)
 
@@ -123,8 +120,19 @@ class XPBeaconMonitor:
         Find the IP of XPlane Host in Network.
         It takes the first one it can find.
 
+        BeaconData is a python dataclass with the following attrbiutes:
+        ```python
+        class BeaconData:
+            host: str
+            port: int
+            hostname: str
+            xplane_version: int
+            role: int
+
+        ```
+
         Returns:
-            BeaconData: beacon information or None if not connected/not reachable
+            BeaconData: beacon information or None if not connected/not reachable/no beacon
         """
         if self.socket is not None:
             self.socket.close()
@@ -204,7 +212,7 @@ class XPBeaconMonitor:
 
     def connect_loop(self):
         """
-        Trys to connect to X-Plane indefinitely until self.should_not_connect is set.
+        Trys to connect to X-Plane indefinitely until should_not_connect Event is set.
         If a connection fails, drops, disappears, will try periodically to restore it.
         """
         logger.debug("starting..")
@@ -244,6 +252,32 @@ class XPBeaconMonitor:
     # ################################
     # Interface
     #
+    @property
+    def connected(self) -> bool:
+        """Returns whether beacon from X-Plane is periodically received"""
+        res = self.data is not None
+        if not res and not self._already_warned > self.MAX_WARNING:
+            if self._already_warned == self.MAX_WARNING:
+                logger.warning("no connection (last warning)")
+            else:
+                logger.warning("no connection")
+            self._already_warned = self._already_warned + 1
+        return res
+
+    def set_callback(self, callback: Callable | None = None):
+        """Set callback function
+
+        Callback function will be called whenever the status of the "connection" changes.
+
+        Callback function prototype
+        ```python
+        callback(connected: bool)
+        ```
+
+        Connected is True is beacon is detected at regular interval, False otherwise
+        """
+        self._callback = callback
+
     def connect(self):
         """Starts beacon monitor"""
         if self.should_not_connect is None:
@@ -255,7 +289,7 @@ class XPBeaconMonitor:
             logger.debug("connect_loop already started")
 
     def disconnect(self):
-        """Ends beacon monitor"""
+        """Terminates beacon monitor"""
         if self.should_not_connect is not None:
             logger.debug("disconnecting..")
             self.data = None
@@ -277,7 +311,7 @@ class XPBeaconMonitor:
                 logger.debug("..not connected")
 
     def same_host(self) -> bool:
-        """Attempt to determine if X-Plane is running on local host or remote host"""
+        """Attempt to determine if X-Plane is running on local host (where beacon monitor runs) or remote host"""
         if self.connected:
             r = self.data.host in self.my_ips
             logger.debug(f"{self.data.host}{'' if r else ' not'} in {self.my_ips}")

@@ -54,7 +54,6 @@ class XPWebsocketAPI(XPRestAPI):
         self.ws_event.set()  # means it is off
         self.ws_thread = None
 
-
         self.req_number = 0
         self._requests = {}
 
@@ -613,7 +612,7 @@ class XPWebsocketAPI(XPRestAPI):
             time.sleep(1)
         logger.debug("..connected")
 
-    def monitor_datarefs(self, datarefs: dict, reason: str | None = None) -> Tuple[int|bool, Dict]:
+    def monitor_datarefs(self, datarefs: dict, reason: str | None = None) -> Tuple[int | bool, Dict]:
         if not self.connected:
             logger.debug(f"would add {datarefs.keys()}")
             return (False, {})
@@ -652,7 +651,7 @@ class XPWebsocketAPI(XPRestAPI):
             logger.debug("no dataref to add")
         return ret, effectives
 
-    def unmonitor_datarefs(self, datarefs: dict, reason: str | None = None) -> Tuple[int|bool, Dict]:
+    def unmonitor_datarefs(self, datarefs: dict, reason: str | None = None) -> Tuple[int | bool, Dict]:
         if not self.connected:
             logger.debug(f"would remove {datarefs.keys()}")
             return (False, {})

@@ -1,11 +1,11 @@
 import logging
 import base64
 from datetime import timedelta
-from typing import Any
+from typing import List
 
 import requests
 
-from .api import REST_KW, DATAREF_DATATYPE, API, Dataref, DatarefMeta, Command, CommandMeta, Cache, webapi_logger
+from .api import REST_KW, DATAREF_DATATYPE, API, Dataref, DatarefMeta, Command, CommandMeta, Cache, webapi_logger, DatarefValueType
 
 # local logging
 logger = logging.getLogger(__name__)
@@ -318,7 +318,7 @@ class XPRestAPI(API):
         logger.error(f"rest_execute: {response}, {data}")
         return False
 
-    def dataref_value(self, dataref: Dataref) -> Any:
+    def dataref_value(self, dataref: Dataref) -> DatarefValueType:
         """Get dataref value through REST API
 
         Value is not stored or cached.
@@ -340,3 +340,84 @@ class XPRestAPI(API):
         webapi_logger.info(f"ERROR {dataref.path}: {response} {response.reason} {response.text}")
         logger.error(f"dataref_value: {response} {response.reason} {response.text}")
         return None
+
+    def dataref_meta(self, dataref, fields: List[str] | str = "all") -> DatarefMeta | None:
+        """Get dataref meta data through REST API
+
+        @todo: dataref_meta(self, dataref, fields:List[str]|str = "all")  # fields={id, name, value_type, all}
+        """
+        url = f"{self.rest_url}/datarefs/filter[name]={dataref.path}"
+        if fields != "all":
+            url = url + f"&fields=[{','.join(fields)}]"
+        response = requests.get(url)
+        if response.status_code == 200:
+            respjson = response.json()
+            webapi_logger.info(f"GET {dataref.path}: {url} = {respjson}")
+            data = respjson[REST_KW.DATA.value]
+            try:
+                ret = Cache.meta(**data[0]) if type(data) is list and len(data) > 0 else Cache.meta(**data)
+                return ret
+            except:
+                logger.warning(f"dataref meta invalid {data}", exc_info=True)
+            return None
+        webapi_logger.info(f"ERROR {dataref.path}: {response} {response.reason} {response.text}")
+        logger.error(f"dataref_value: {response} {response.reason} {response.text}")
+        return None
+
+    # Meta data collection for one or more datarefs or commands
+    #
+    def datarefs_meta(self, datarefs: List[Dataref], fields: List[str] | str = "all", start: int | None = None, limit: int | None = None) -> List[DatarefMeta]:
+        """Get dataref meta data through REST API for all dataref supplied
+
+        @todo: datarefs_meta(self, dataref, fields:List[str]|str = "all", start: int|None = None, limit: int|None = None)  # fields={id, name, value_type, all}
+        """
+        payload = "&".join([f"filter[name]={d.path}" for d in datarefs])
+        if fields != "all":
+            payload = payload + f"&fields=[{fields}]"
+        if start is not None:
+            payload = payload + f"&start={start}"
+        if limit is not None:
+            payload = payload + f"&limit={limit}"
+        url = f"{self.rest_url}/datarefs"
+        response = requests.get(url, params=payload)
+        if response.status_code == 200:
+            respjson = response.json()
+            webapi_logger.info(f"GET {payload}: {url} = {respjson}")
+            data = respjson[REST_KW.DATA.value]
+            try:
+                ret = [Cache.meta(**m) for m in data]
+                return ret
+            except:
+                logger.warning(f"dataref meta invalid {data}", exc_info=True)
+            return []
+        webapi_logger.info(f"ERROR {payload}: {response} {response.reason} {response.text}")
+        logger.error(f"datarefs_meta: {response} {response.reason} {response.text}")
+        return []
+
+    def commands_meta(self, commands: List[Command], fields: List[str] | str = "all", start: int | None = None, limit: int | None = None) -> List[CommandMeta]:
+        """Get dataref meta data through REST API for all dataref supplied
+
+        @todo: commands_meta(self, dataref, fields:List[str]|str = "all", start: int|None = None, limit: int|None = None)  # fields={id, name, description, all}
+        """
+        payload = "&".join([f"filter[name]={c.path}" for c in commands])
+        if fields != "all":
+            payload = payload + f"&fields=[{fields}]"
+        if start is not None:
+            payload = payload + f"&start={start}"
+        if limit is not None:
+            payload = payload + f"&limit={limit}"
+        url = f"{self.rest_url}/commands"
+        response = requests.get(url, params=payload)
+        if response.status_code == 200:
+            respjson = response.json()
+            webapi_logger.info(f"GET {payload}: {url} = {respjson}")
+            data = respjson[REST_KW.DATA.value]
+            try:
+                ret = [Cache.meta(**m) for m in data]
+                return ret
+            except:
+                logger.warning(f"command meta invalid {data}", exc_info=True)
+            return []
+        webapi_logger.info(f"ERROR {payload}: {response} {response.reason} {response.text}")
+        logger.error(f"commands_meta: {response} {response.reason} {response.text}")
+        return []
