@@ -63,7 +63,8 @@ class XPBeaconMonitor:
     """X-Plane «beacon» monitor.
 
     Monitors X-Plane beacon which betrays X-Plane UDP port reachability.
-    It proceeds by calling a user supplied callback function which is called
+    Beacon monitor listen for X-Plane beacon on UDP port.
+    When beacon is detected, Beacon Monitor calls back a user-supplied function
     whenever the reachability status changes.
 
     Usage;

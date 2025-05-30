@@ -22,8 +22,8 @@ api = xpwebapi.rest_api(host="192.168.1.140", port=8080, api_version="v2")  # de
 
 print(api.capabilities)
 
-d1 = api.dataref("sim/cockpit2/clock_timer/local_time_seconds")
-d2 = api.dataref("sim/cockpit2/clock_timer/local_time_seconds")
+d1 = api.dataref("sim/cockpit2/clock_timer/local_time_hours")
+d2 = api.dataref("sim/cockpit2/clock_timer/zulu_time_hours")
 
 dm = api.datarefs_meta(datarefs=[d1, d2])
 
@@ -31,7 +31,7 @@ print(dm)
 
 # sim/map/show_current
 c1 = api.command("sim/map/show_current")
-c2 = api.command("sim/map/show_current")
+c2 = api.command("sim/operation/toggle_weather_map")
 
 cm = api.commands_meta(commands=[c1, c2])
 

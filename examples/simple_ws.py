@@ -1,7 +1,5 @@
 import os
 import sys
-import threading
-
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 import logging
@@ -39,6 +37,8 @@ dataref = ws.dataref("sim/cockpit2/clock_timer/local_time_seconds")
 ws.monitor_dataref(dataref)
 
 ws.monitor_command_active(ws.command("sim/map/show_current"))
+
+print("\n\nplease activate map in X-Plane with sim/map/show_current (usually key stroke 'm')\n")
 
 ws.start(release=True)
 
