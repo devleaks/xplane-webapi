@@ -31,7 +31,7 @@ XP_MAX_VERSION_STR = "12.1.4"
 # WEBSOCKET API
 #
 class XPWebsocketAPI(XPRestAPI):
-    """Utility routines specific to Websocket API
+    """X-Plane Websocket API Client Handler
 
     See https://developer.x-plane.com/article/x-plane-web-api/#Websockets_API.
     """
@@ -76,7 +76,7 @@ class XPWebsocketAPI(XPRestAPI):
     def next_req(self) -> int:
         """Provides request number for Websocket requests
 
-        Current request number is available through attribute `req_number`
+        Current request number is available through attribute `req_number`.
         """
         self.req_number = self.req_number + 1
         return self.req_number
@@ -86,7 +86,7 @@ class XPWebsocketAPI(XPRestAPI):
     #
     @property
     def connected(self) -> bool:
-        """Whether Websocket API is reachable"""
+        """Whether client software is connect to Websoket"""
         res = self.ws is None
         if res and self._already_warned <= self.MAX_WARNING:
             if self._already_warned == self.MAX_WARNING:
@@ -97,7 +97,7 @@ class XPWebsocketAPI(XPRestAPI):
         return not res
 
     def connect_websocket(self):
-        """Create Websocket if it is reachable"""
+        """Create and open Websocket connection if it is reachable"""
         if self.ws is None:
             try:
                 if super().connected:
@@ -126,7 +126,7 @@ class XPWebsocketAPI(XPRestAPI):
 
     def connect_loop(self):
         """
-        Trys to connect to X-Plane indefinitely until self.should_not_connect is set.
+        Attempts to connect to X-Plane Websocket indefinitely until self.should_not_connect is set.
         If a connection fails, drops, disappears, will try periodically to restore it.
         """
         logger.debug("starting connection monitor..")
@@ -193,7 +193,7 @@ class XPWebsocketAPI(XPRestAPI):
     #
     def connect(self, reload_cache: bool = False):
         """
-        Starts connect loop.
+        Starts attempting to connect to Websocket.
         """
         if self.should_not_connect is None:
             self.should_not_connect = threading.Event()
@@ -207,7 +207,7 @@ class XPWebsocketAPI(XPRestAPI):
 
     def disconnect(self):
         """
-        End connect loop and disconnect
+        Stop attempting to connect to Websocket.
         """
         if self.should_not_connect is not None:
             logger.debug("disconnecting..")
@@ -232,31 +232,31 @@ class XPWebsocketAPI(XPRestAPI):
     #
     # Generic payload "send" function, unique
     def send(self, payload: dict, mapping: dict = {}) -> int | bool:
-        """Send payload message through Websocket
+        """Send payload message (JSON) through Websocket
 
         Args:
-            payload (dict): message
+            payload (dict): JSON message
             mapping (dict): corresponding {idenfier: path} for printing/debugging
 
         Returns:
             bool if fails
             request id if succeeded
         """
-        if self.connected:
-            if payload is not None and len(payload) > 0:
-                req_id = self.next_req
-                payload[REST_KW.REQID.value] = req_id
-                self._requests[req_id] = None  # may be should remember timestamp, etc. if necessary, create Request class.
-                self.ws.send(json.dumps(payload))
-                webapi_logger.info(f">>SENT {payload}")
-                if len(mapping) > 0:
-                    maps = [f"{k}={v}" for k, v in mapping.items()]
-                    webapi_logger.info(f">> MAP {', '.join(maps)}")
-                return req_id
-            else:
-                logger.warning("no payload")
-        logger.warning("not connected")
-        return False
+        if not self.connected:
+            logger.warning("not connected")
+            return False
+        if payload is None or len(payload) == 0:
+            logger.warning("no payload")
+            return False
+        req_id = self.next_req
+        payload[REST_KW.REQID.value] = req_id
+        self._requests[req_id] = None  # may be should remember timestamp, etc. if necessary, create Request class.
+        self.ws.send(json.dumps(payload))
+        webapi_logger.info(f">>SENT {payload}")
+        if len(mapping) > 0:
+            maps = [f"{k}={v}" for k, v in mapping.items()]
+            webapi_logger.info(f">> MAP {', '.join(maps)}")
+        return req_id
 
     # Dataref operations
     #
@@ -264,7 +264,7 @@ class XPWebsocketAPI(XPRestAPI):
     # through web service. No get_dataref_value().
     #
     def set_dataref_value(self, path, value) -> bool | int:
-        """Set dataref value through Websocket
+        """Set single dataref value through Websocket
 
         Returns:
             bool if fails
@@ -339,6 +339,16 @@ class XPWebsocketAPI(XPRestAPI):
     # Command operations
     #
     def register_command_is_active_event(self, path: str, on: bool = True) -> bool | int:
+        """Register single command for active reporting.
+
+        Args:
+            path (str): Command path
+            on (bool): True registers for active reporting, False unregisters.
+
+        Returns:
+            bool if fails
+            request id if succeeded
+        """
         cmdref = self.get_command_meta_by_name(path)
         if cmdref is not None:
             mapping = {cmdref.ident: cmdref.name}
@@ -348,6 +358,16 @@ class XPWebsocketAPI(XPRestAPI):
         return -1
 
     def register_bulk_command_is_active_event(self, paths, on: bool = True) -> bool | int:
+        """Register multiple commands for active reporting.
+
+        Args:
+            paths (str): Command paths
+            on (bool): True registers for active reporting, False unregisters.
+
+        Returns:
+            bool if fails
+            request id if succeeded
+        """
         cmds = []
         mapping = {}
         for path in paths:
@@ -367,6 +387,16 @@ class XPWebsocketAPI(XPRestAPI):
         return -1
 
     def set_command_is_active_with_duration(self, path: str, duration: float = 0.0) -> bool | int:
+        """Execute command active with duration.
+
+        Args:
+            path (str): Command path
+            duration: float: Duration, should be between 0.0 and 10.0.
+
+        Returns:
+            bool if fails
+            request id if succeeded
+        """
         cmdref = self.get_command_meta_by_name(path)
         if cmdref is not None:
             return self.send(
@@ -381,6 +411,16 @@ class XPWebsocketAPI(XPRestAPI):
         return -1
 
     def set_command_is_active_without_duration(self, path: str, active: bool) -> bool | int:
+        """Execute command active with no duration
+
+        Args:
+            path (str): Command path
+            active (bool): Command active status.
+
+        Returns:
+            bool if fails
+            request id if succeeded
+        """
         cmdref = self.get_command_meta_by_name(path)
         if cmdref is not None:
             return self.send(
@@ -393,16 +433,35 @@ class XPWebsocketAPI(XPRestAPI):
         return -1
 
     def set_command_is_active_true_without_duration(self, path) -> bool | int:
+        """Execute command active with no duration
+
+        Args:
+            path (str): Command path
+
+        Returns:
+            bool if fails
+            request id if succeeded
+        """
         return self.set_command_is_active_without_duration(path=path, active=True)
 
     def set_command_is_active_false_without_duration(self, path) -> bool | int:
+        """Execute command inactive with no duration
+
+        Args:
+            path (str): Command path
+
+        Returns:
+            bool if fails
+            request id if succeeded
+        """
         return self.set_command_is_active_without_duration(path=path, active=False)
 
     # ################################
     # Start/Run/Stop
     #
     def ws_receiver(self):
-        """Read and decode websocket messages and calls back"""
+        """Read and decode websocket messages and calls back
+        """
         logger.info("starting websocket listener..")
         self.RECEIVE_TIMEOUT = 1  # when not connected, checks often
         total_reads = 0
@@ -596,7 +655,7 @@ class XPWebsocketAPI(XPRestAPI):
         """Reset Websocket connection
 
         Stop existing Websocket connect and create a new one.
-        Initialize and load cache if requested.
+        Initialize and reload cache.
         If datarefs/commands identifier have changed, reassign new identifiers.
         """
         self.stop()
@@ -606,6 +665,7 @@ class XPWebsocketAPI(XPRestAPI):
 
     # Interface
     def wait_connection(self):
+        """Waits that connection to Websocket opens."""
         logger.debug("connecting..")
         while not self.connected:
             logger.debug("..waiting for connection..")
@@ -613,6 +673,17 @@ class XPWebsocketAPI(XPRestAPI):
         logger.debug("..connected")
 
     def monitor_datarefs(self, datarefs: dict, reason: str | None = None) -> Tuple[int | bool, Dict]:
+        """Starts monitoring of supplied datarefs.
+
+        [description]
+
+        Args:
+            datarefs (dict): {path: Dataref} dictionary of datarefs
+            reason| None ([type]): Documentation only string to identify call to function (default: `None`)
+
+        Returns:
+            Tuple[int | bool, Dict]: [description]
+        """
         if not self.connected:
             logger.debug(f"would add {datarefs.keys()}")
             return (False, {})
@@ -652,6 +723,17 @@ class XPWebsocketAPI(XPRestAPI):
         return ret, effectives
 
     def unmonitor_datarefs(self, datarefs: dict, reason: str | None = None) -> Tuple[int | bool, Dict]:
+        """Stops monitoring supplied datarefs.
+
+        [description]
+
+        Args:
+            datarefs (dict): {path: Dataref} dictionary of datarefs
+            reason| None ([type]): Documentation only string to identify call to function (default: `None`)
+
+        Returns:
+            Tuple[int | bool, Dict]: [description]
+        """
         if not self.connected:
             logger.debug(f"would remove {datarefs.keys()}")
             return (False, {})
@@ -700,25 +782,91 @@ class XPWebsocketAPI(XPRestAPI):
         return ret, effectives
 
     def monitor_dataref(self, dataref: Dataref) -> bool | int:
+        """Starts monitoring single dataref.
+
+        [description]
+
+        Args:
+            dataref (Dataref): Dataref to monitor
+            reason| None ([type]): Documentation only string to identify call to function (default: `None`)
+
+        Returns:
+            bool if fails
+            request id if succeeded
+        """
         ret = self.monitor_datarefs(datarefs={dataref.path: dataref}, reason="monitor_dataref")
         return ret[0]
 
     def unmonitor_dataref(self, dataref: Dataref) -> bool | int:
+        """Stops monitoring single dataref.
+
+        [description]
+
+        Args:
+            dataref (Dataref): Dataref to stop monitoring
+            reason| None ([type]): Documentation only string to identify call to function (default: `None`)
+
+        Returns:
+            bool if fails
+            request id if succeeded
+        """
         ret = self.unmonitor_datarefs(datarefs={dataref.path: dataref}, reason="unmonitor_dataref")
         return ret[0]
 
-    def monitor_command_active(self, command: Command) -> bool | int:
-        return self.register_command_is_active_event(path=command.path, on=True)
-
-    def unmonitor_command_active(self, command: Command) -> bool | int:
-        return self.register_command_is_active_event(path=command.path, on=False)
-
     def write_dataref(self, dataref: Dataref) -> bool | int:
+        """Writes dataref value to simulator.
+
+        Writing is done through REST API if use_rest is True, or Websocket API if use_rest is False and Websocket is opened.
+
+        Args:
+            dataref (Dataref): Dataref write to simulator
+
+        Returns:
+            bool if fails
+            request id if succeeded
+        """
         if self.use_rest:
             return super().write_datatef(dataref=dataref)
         return self.set_dataref_value(path=dataref.name, value=dataref._new_value)
 
+    def monitor_command_active(self, command: Command) -> bool | int:
+        """Starts monitoring single command for activity.
+
+        Args:
+            command (Command): Command to monitor
+            reason| None ([type]): Documentation only string to identify call to function (default: `None`)
+
+        Returns:
+            bool if fails
+            request id if succeeded
+        """
+        return self.register_command_is_active_event(path=command.path, on=True)
+
+    def unmonitor_command_active(self, command: Command) -> bool | int:
+        """Stops monitoring single command for activity.
+
+        Args:
+            command (Command): Command to monitor
+            reason| None ([type]): Documentation only string to identify call to function (default: `None`)
+
+        Returns:
+            bool if fails
+            request id if succeeded
+        """
+        return self.register_command_is_active_event(path=command.path, on=False)
+
     def execute(self, command: Command, duration: float = 0.0) -> bool | int:
+        """Execute command in simulator.
+
+        Execution is done through REST API if use_rest is True, or Websocket API if use_rest is False and Websocket is opened.
+
+        Args:
+            command (Command): Command to execute
+
+        Returns:
+            bool if fails
+            request id if succeeded
+        """
         if self.use_rest:
             return super().execute(command=command, duration=duration)
         return self.set_command_is_active_with_duration(path=command.path, duration=duration)

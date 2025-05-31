@@ -245,7 +245,7 @@ class XPRestAPI(API):
         """Get command meta data by command identifier"""
         return self.all_commands.get_by_id(ident) if self.all_commands is not None else None
 
-    def write_dataref(self, dataref: Dataref) -> bool:
+    def write_dataref(self, dataref: Dataref) -> bool | int:
         """Write single dataref value through REST API
 
         Returns:
