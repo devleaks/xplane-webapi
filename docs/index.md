@@ -1,8 +1,8 @@
 # Python wrapper for X-Plane Web API
 
-For full documentation visit [x-plane.com](https://developer.x-plane.com/article/x-plane-web-api/).
+For full documentation of X-Plane Web API visit [x-plane.com](https://developer.x-plane.com/article/x-plane-web-api/).
 
-## Structures
+## Models
 
 - [Dataref](dataref.md)
 - [Command](command.md)
@@ -10,7 +10,7 @@ For full documentation visit [x-plane.com](https://developer.x-plane.com/article
 ## API
 
 - [REST API](rest_api.md)
-- [Webscket API](ws_api.md)
+- [Websocket API](ws_api.md)
 
 ## Utilities
 
@@ -24,7 +24,7 @@ For full documentation visit [x-plane.com](https://developer.x-plane.com/article
 pip install 'xpwebapi @ git+https://github.com/devleaks/xplane-webapi.git'
 ```
 
-For development, add option `dev`
+For development, add option `dev`:
 
 
 ```sh
