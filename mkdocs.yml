@@ -3,10 +3,25 @@ site_name: Python wrapper for X-Plane Web API
 theme:
   name: "material"
   palette:
+  - media: "(prefers-color-scheme)"
+    toggle:
+      icon: material/brightness-auto
+      name: Switch to light mode
+  - media: "(prefers-color-scheme: light)"
+    scheme: default
+    primary: teal
+    accent: purple
+    toggle:
+      icon: material/weather-sunny
+      name: Switch to dark mode
+  - media: "(prefers-color-scheme: dark)"
     scheme: slate
-    primary: indigo
-    accent: orange
-#  logo: plane
+    primary: black
+    accent: lime
+    toggle:
+      icon: material/weather-night
+      name: Switch to system preference
+  logo: material/plane
 
 nav:
   - Welcome: index.md
@@ -18,5 +33,8 @@ nav:
 
 
 plugins:
-  - mkdocstrings
-
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: true
