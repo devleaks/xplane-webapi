@@ -9,6 +9,7 @@ Attributes:
     logger (Logger): Loger for functions and classes in this file.
 
 """
+
 import logging
 import threading
 import socket
@@ -49,9 +50,11 @@ def list_my_ips() -> List[str]:
                 r.append(ip.ip)
     return r
 
+
 @dataclass
 class BeaconData:
     """Pythonic dataclass to host X-Plane Beacon data."""
+
     host: str
     port: int
     hostname: str
@@ -61,6 +64,7 @@ class BeaconData:
 
 class BEACON_DATA(Enum):
     """X-Plane names of attributes inside its beacon."""
+
     IP = "IP"
     PORT = "Port"
     HOSTNAME = "hostname"
@@ -76,6 +80,7 @@ class BEACON_MONITOR_STATUS(IntEnum):
     - DETECTING_BEACON - Beacon monitor is running and beacon detected
 
     """
+
     NOT_RUNNING = 0  # Beacon not running
     RUNNING = 1  # Beacon running but no beacon detected
     DETECTING_BEACON = 2  # Beacon running and beacon detected
@@ -105,8 +110,8 @@ class XPBeaconMonitor:
         _already_warned (bool):
         _callback: (Callable | None):
 
-        should_not_connect (threading.Event)
-        connect_thread: (threading.Thread | None)
+        should_not_connect (threading.Event):
+        connect_thread: (threading.Thread | None):
 
 
     Usage;
