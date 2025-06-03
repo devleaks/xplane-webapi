@@ -4,7 +4,7 @@ import logging
 import json
 import base64
 from abc import ABC, abstractmethod
-from enum import Enum
+from enum import Enum, IntEnum
 from datetime import datetime
 from typing import List
 
@@ -30,6 +30,8 @@ webapi_logger = logging.getLogger("webapi")
 
 # REST KEYWORDS
 class REST_KW(Enum):
+    """REST requests and response JSON keywords."""
+
     COMMANDS = "commands"
     DATA = "data"
     DATAREFS = "datarefs"
@@ -70,11 +72,23 @@ class REST_RESPONSE(Enum):
     DATAREF_UPDATE = "dataref_update_values"
 
 
+class CONNECTION_STATUS(IntEnum):
+    """Internal Beacon Connector status"""
+
+    NO_BEACON = 0  # i.e. not receiving beacon
+    RECEIVING_BEACON = 1
+    REST_API_REACHABLE = 2
+    REST_API_NOT_REACHABLE = 8
+    WEBSOCKET_CONNNECTED = 3
+    WEBSOCKET_DISCONNNECTED = 9
+    RECEIVING_DATA = 4
+
+
 # #############################################
 # CORE ENTITIES
 #
 class APIObjMeta(ABC):
-    """Container for XP Web API command meta data"""
+    """Container for XP Web API models meta data"""
 
     def __init__(self, name: str, ident: int) -> None:
         self.name = name
@@ -156,6 +170,7 @@ class API(ABC):
     def __init__(self, host: str, port: int, api: str, api_version: str) -> None:
         self.set_network(host=host, port=port, api=api, api_version=api_version)
         self._use_rest = True  # only option on startup
+        self.status = CONNECTION_STATUS.NO_BEACON
 
     @property
     def use_rest(self) -> bool:
@@ -249,6 +264,9 @@ class API(ABC):
     @abstractmethod
     def execute(self, command: Command, duration: float = 0.0) -> bool | int:
         return False
+
+    def beacon_callback(self, connected: bool):
+        self.status = CONNECTION_STATUS.RECEIVING_BEACON if connected else CONNECTION_STATUS.NO_BEACON
 
 
 class Cache:

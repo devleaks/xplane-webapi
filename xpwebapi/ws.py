@@ -14,7 +14,7 @@ from packaging.version import Version
 
 from simple_websocket import Client, ConnectionClosed
 
-from .api import webapi_logger, REST_KW, REST_RESPONSE, Dataref, Command
+from .api import CONNECTION_STATUS, webapi_logger, REST_KW, REST_RESPONSE, Dataref, Command
 from .rest import XPRestAPI
 
 # local logging
@@ -100,10 +100,11 @@ class XPWebsocketAPI(XPRestAPI):
         """Create and open Websocket connection if it is reachable"""
         if self.ws is None:
             try:
-                if super().connected:
+                if super().connected:  # if rest API reachable...
                     url = self.ws_url
                     if url is not None:
                         self.ws = Client.connect(url)
+                        self.status = CONNECTION_STATUS.WEBSOCKET_CONNNECTED
                         self.reload_caches()
                         logger.info(f"websocket opened at {url}")
                     else:
@@ -118,6 +119,8 @@ class XPWebsocketAPI(XPRestAPI):
         if self.ws is not None:
             self.ws.close()
             self.ws = None
+            self.status = CONNECTION_STATUS.WEBSOCKET_DISCONNNECTED
+            dummy = super().connected  # set REST API reachability status
             if not silent:
                 logger.info("websocket closed")
         else:
@@ -460,8 +463,7 @@ class XPWebsocketAPI(XPRestAPI):
     # Start/Run/Stop
     #
     def ws_receiver(self):
-        """Read and decode websocket messages and calls back
-        """
+        """Read and decode websocket messages and calls back"""
         logger.info("starting websocket listener..")
         self.RECEIVE_TIMEOUT = 1  # when not connected, checks often
         total_reads = 0
@@ -679,7 +681,7 @@ class XPWebsocketAPI(XPRestAPI):
 
         Args:
             datarefs (dict): {path: Dataref} dictionary of datarefs
-            reason| None ([type]): Documentation only string to identify call to function (default: `None`)
+            reason (str | None): Documentation only string to identify call to function.
 
         Returns:
             Tuple[int | bool, Dict]: [description]
@@ -729,7 +731,7 @@ class XPWebsocketAPI(XPRestAPI):
 
         Args:
             datarefs (dict): {path: Dataref} dictionary of datarefs
-            reason| None ([type]): Documentation only string to identify call to function (default: `None`)
+            reason (str | None): Documentation only string to identify call to function.
 
         Returns:
             Tuple[int | bool, Dict]: [description]
@@ -788,7 +790,6 @@ class XPWebsocketAPI(XPRestAPI):
 
         Args:
             dataref (Dataref): Dataref to monitor
-            reason| None ([type]): Documentation only string to identify call to function (default: `None`)
 
         Returns:
             bool if fails
@@ -804,7 +805,6 @@ class XPWebsocketAPI(XPRestAPI):
 
         Args:
             dataref (Dataref): Dataref to stop monitoring
-            reason| None ([type]): Documentation only string to identify call to function (default: `None`)
 
         Returns:
             bool if fails
@@ -834,7 +834,6 @@ class XPWebsocketAPI(XPRestAPI):
 
         Args:
             command (Command): Command to monitor
-            reason| None ([type]): Documentation only string to identify call to function (default: `None`)
 
         Returns:
             bool if fails
@@ -847,7 +846,6 @@ class XPWebsocketAPI(XPRestAPI):
 
         Args:
             command (Command): Command to monitor
-            reason| None ([type]): Documentation only string to identify call to function (default: `None`)
 
         Returns:
             bool if fails

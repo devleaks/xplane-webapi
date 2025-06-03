@@ -4,8 +4,9 @@ from datetime import timedelta
 from typing import List
 
 import requests
+from natsort import natsorted
 
-from .api import REST_KW, DATAREF_DATATYPE, API, Dataref, DatarefMeta, Command, CommandMeta, Cache, webapi_logger, DatarefValueType
+from .api import CONNECTION_STATUS, REST_KW, DATAREF_DATATYPE, API, Dataref, DatarefMeta, Command, CommandMeta, Cache, webapi_logger, DatarefValueType
 
 # local logging
 logger = logging.getLogger(__name__)
@@ -89,10 +90,12 @@ class XPRestAPI(API):
             response = requests.get(CHECK_API_URL)
             webapi_logger.info(f"GET {CHECK_API_URL}: {response}")
             if response.status_code == 200:
+                self.status = CONNECTION_STATUS.REST_API_REACHABLE
                 return True
         except requests.exceptions.ConnectionError:
             if self._warning_count % 20 == 0:
                 logger.warning("api unreachable, may be X-Plane is not running")
+                self.status = CONNECTION_STATUS.REST_API_NOT_REACHABLE
                 self._warning_count = self._warning_count + 1
         except:
             logger.error("api unreachable, may be X-Plane is not running", exc_info=True)
@@ -140,8 +143,8 @@ class XPRestAPI(API):
 
         Version is often specified with a v# short string.
         If no version is supplied, try to take the latest version available.
-        Version numbering is not formally specified, therefore alphabetical ordering of strings if used.
-        Warning: Version v10 < v2.
+        Version numbering is not formally specified, ordering is performed using natural sorting.
+        (See [natsort](https://github.com/SethMMorton/natsort/wiki).)
         """
         capabilities = self.capabilities
         if len(capabilities) == 0:
@@ -149,7 +152,7 @@ class XPRestAPI(API):
             self.version = api_version
             self._api_version = f"/{api_version}"
             logger.warning("no capabilities, cannot check API version")
-            logger.info(f"set api {api_version} without control")
+            logger.info(f"set api {api_version} without verification")
             return
         api_details = capabilities.get("api")
         if api_details is not None:
@@ -158,22 +161,17 @@ class XPRestAPI(API):
                 if api_versions is None:
                     logger.error("cannot determine api, api not set")
                     return
-                api = sorted(api_versions)[-1]  # takes the latest one, hoping it is the latest in time...
-                latest = ""
-                try:
-                    api = f"v{max([int(v.replace('v', '')) for v in api_versions])}"
-                    latest = " latest"
-                except:
-                    pass
-                logger.info(f"selected{latest} api {api} ({sorted(api_versions)})")
+                sorted_apis = natsorted(api_versions, reverse=True)
+                api = sorted_apis[0]  # takes the latest one, hoping it is the latest in time...
+                logger.info(f"selected api {api} ({sorted_apis})")
             if api_version in api_versions:
                 self.version = api_version
                 self._api_version = f"/{api_version}"
                 logger.info(f"set api {api_version}, xp {self.xp_version}")
             else:
-                logger.warning(f"no api {api_version} in {api_versions}")
+                logger.warning(f"no api {api_version} in {api_versions}, api not set")
             return
-        logger.warning(f"could not check api {api_version} in {capabilities}")
+        logger.warning(f"could not check api {api_version} in {capabilities}, api not set")
 
     # Cache
     def reload_caches(self, force: bool = False, save: bool = False):
@@ -421,3 +419,33 @@ class XPRestAPI(API):
         webapi_logger.info(f"ERROR {payload}: {response} {response.reason} {response.text}")
         logger.error(f"commands_meta: {response} {response.reason} {response.text}")
         return []
+
+    def set_connection_from_beacon_data(self, beacon_data: "BeaconData", same_host: bool):
+        DEFAULT_TCP_PORT = 8086
+        REMOTE_TCP_PORT = 8080  # when adressing remote host, this is the port number of the **proxy** to X-Plane standard :8086 port
+
+        XP_MIN_VERSION = 121400
+        XP_MIN_VERSION_STR = "12.1.4"
+        XP_MAX_VERSION = 121499
+        XP_MAX_VERSION_STR = "12.1.4"
+
+        self.use_rest = self.use_rest and not same_host
+        new_host = "127.0.0.1"
+        new_port = DEFAULT_TCP_PORT
+        if not same_host:
+            new_host = beacon_data.host
+            new_port = REMOTE_TCP_PORT
+        xp_version = beacon_data.xplane_version
+        if xp_version is not None:
+            use_rest = ", use REST" if self.use_rest else ""
+            new_apiversion = "/v1"
+            if xp_version >= XP_MIN_VERSION:
+                new_apiversion = "/v2"
+            elif xp_version < XP_SUPER_MIN_VERSION:
+                new_apiversion = ""
+                logger.warning(f"could not set API version from {xp_version} ({beacon_data})")
+            if new_apiversion != "":
+                self.set_network(host=new_host, port=new_port, api="/api", api_version=new_apiversion)
+                logger.info(f"XPlane API at {self.rest_url} from UDP beacon data{use_rest}")
+        else:
+            logger.warning(f"could not get X-Plane version from {beacon_data}")

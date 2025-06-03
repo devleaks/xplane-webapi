@@ -11,7 +11,7 @@ beacon = xpwebapi.beacon()
 
 
 def callback(connected: bool):
-    print("simply reachable" if connected else "simply unreachable")
+    print("X-Plane beacon " + ("detected" if connected else "not detected"))
     if beacon.connected:  # !!beacon defined before
         print(beacon.find_ip())
         print("same host:", beacon.same_host())

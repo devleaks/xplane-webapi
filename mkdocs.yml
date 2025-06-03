@@ -24,8 +24,14 @@ theme:
   logo: x-plane.svg
 
 nav:
-  - Welcome: index.md
+- Home:
+  - Overview: index.md
+  - Changelog: changelog.md
+- Usage: usage/index.md
+- Reference: reference/index.md
 
+markdown_extensions:
+- pymdownx.snippets
 
 plugins:
   - search

@@ -16,4 +16,4 @@ def ws_api(**kwargs):
     return XPWebsocketAPI(**kwargs)
 
 
-version = "1.0.0"
+version = "1.1.0"

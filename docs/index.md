@@ -1,9 +1,7 @@
 ---
-title: API reference
+title: Overview
 hide:
-- navigation
+- feedback
 ---
 
-# ::: xpwebapi
-    options:
-        show_submodules: true
+--8<-- "README.md"

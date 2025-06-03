@@ -41,9 +41,12 @@ ws.monitor_command_active(ws.command("sim/map/show_current"))
 
 print("\n\nplease activate map in X-Plane with sim/map/show_current (usually key stroke 'm')\n")
 
+
 ws.start(release=True)
 
-time.sleep(10)
+sometime = 60  # seconds
+print(f"waiting {sometime} before terminating")
+time.sleep(sometime)
 
 print("terminating..")
 ws.stop()

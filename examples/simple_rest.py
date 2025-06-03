@@ -27,14 +27,15 @@ api.set_api_version(api_version="v2")
 dataref = api.dataref("sim/cockpit2/clock_timer/local_time_seconds")
 print(dataref)
 
+# fails:
+dataref.monitor()
+
 # # dataref.value = 6
 # # print(dataref)
 # # dataref.write()
 
-# command = api.command("toliss_airbus/lightcommands/BeaconToggle")
-# print(command)
-# command.execute()
-
-# sim/map/show_current
 mapview = api.command("sim/map/show_current")
 mapview.execute()
+
+# fails:
+mapview.monitor()
