@@ -10,15 +10,17 @@ import xpwebapi
 beacon = xpwebapi.beacon()
 
 
-def callback(connected: bool):
+def callback(connected: bool, beacon_data: xpwebapi.BeaconData, same_host: bool):
     print("X-Plane beacon " + ("detected" if connected else "not detected"))
-    if beacon.connected:  # !!beacon defined before
-        print(beacon.find_ip())
-        print("same host:", beacon.same_host())
+    if connected:  # !!beacon defined before
+        print(beacon_data)
+        print("same host:", same_host)
 
 
 beacon.set_callback(callback)
 
 beacon.connect()
-time.sleep(10)
+sometime=10  # secs
+print(f"attempting {sometime} seconds")
+time.sleep(sometime)
 beacon.disconnect()

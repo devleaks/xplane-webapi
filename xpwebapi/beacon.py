@@ -118,7 +118,7 @@ class XPBeaconMonitor:
     ```python
     import xpwebapi
 
-    def callback(connected: bool):
+    def callback(connected: bool, beacon_data: xpwebapi.BeaconData, same_host: bool):
         print("reachable" if connected else "unreachable")
 
     beacon = xpwebapi.beacon()
@@ -152,7 +152,7 @@ class XPBeaconMonitor:
     # ################################
     # Internal functions
     #
-    def callback(self, connected):
+    def callback(self, connected: bool, beacon_data: BeaconData, same_host: bool):
         """Execute callback function if supplied
 
         Callback function prototype
@@ -163,7 +163,7 @@ class XPBeaconMonitor:
         Connected is True is beacon is detected at regular interval, False otherwise
         """
         if self._callback is not None:
-            self._callback(connected)
+            self._callback(connected=connected, beacon_data=beacon_data, same_host=same_host)
 
     def find_ip(self) -> BeaconData | None:
         """Returns first occurence of X-Plane beacon data
@@ -272,12 +272,12 @@ class XPBeaconMonitor:
         while self.should_not_connect is not None and not self.should_not_connect.is_set():
             if not self.connected:
                 try:
-                    dummy = self.find_ip()
+                    beacon_data = self.find_ip()  # this provokes attempt to connect
                     if self.connected:
                         self.status = BEACON_MONITOR_STATUS.DETECTING_BEACON
                         self._already_warned = 0
                         logger.info(f"beacon: {self.data}")
-                        self.callback(True)  # connected
+                        self.callback(connected=True, beacon_data=beacon_data, same_host=self.same_host())  # connected
                 except XPlaneVersionNotSupported:
                     self.data = None
                     logger.error("..X-Plane Version not supported..")
@@ -285,7 +285,7 @@ class XPBeaconMonitor:
                     if self.status == BEACON_MONITOR_STATUS.DETECTING_BEACON:
                         logger.warning("disconnected")
                         self.status = BEACON_MONITOR_STATUS.RUNNING
-                        self.callback(False)  # disconnected
+                        self.callback(False, None, None)  # disconnected
                     self.data = None
                     if cnt % XPBeaconMonitor.WARN_FREQ == 0:
                         logger.error(f"..X-Plane instance not found on local network.. ({datetime.now().strftime('%H:%M:%S')})")
@@ -297,7 +297,7 @@ class XPBeaconMonitor:
                 self.should_not_connect.wait(XPBeaconMonitor.RECONNECT_TIMEOUT)  # could be n * RECONNECT_TIMEOUT
                 logger.debug("..monitoring connection..")
         self.status = BEACON_MONITOR_STATUS.NOT_RUNNING
-        self.callback(False)  # disconnected
+        self.callback(False, None, None)  # disconnected
         logger.debug("..ended")
 
     # ################################
@@ -378,11 +378,11 @@ class XPBeaconMonitor:
 if __name__ == "__main__":
     beacon = XPBeaconMonitor()
 
-    def callback(connected: bool):
+    def callback(connected: bool, beacon_data: BeaconData, same_host: bool):
         print("reachable" if connected else "unreachable")
-        if beacon.connected:  # beacon is bound to above declaration
-            print(beacon.find_ip())
-            print(beacon.same_host())
+        if connected:  # beacon is bound to above declaration
+            print(beacon_data)
+            print(same_host)
 
     beacon.set_callback(callback)
     beacon.connect()

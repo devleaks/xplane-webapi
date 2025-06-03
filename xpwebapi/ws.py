@@ -64,6 +64,7 @@ class XPWebsocketAPI(XPRestAPI):
 
         #
         self.on_start = None  # func(connected: bool)
+        self.on_stop = None  # func(connected: bool)
         self.on_dataref_update = None  # func(dataref:str, value)
         self.on_command_active = None  # func(command:str, active: bool)
 
@@ -467,6 +468,7 @@ class XPWebsocketAPI(XPRestAPI):
         logger.info("starting websocket listener..")
         self.RECEIVE_TIMEOUT = 1  # when not connected, checks often
         total_reads = 0
+        attention = 40
         to_count = 0
         TO_COUNT_DEBUG = 10
         TO_COUNT_INFO = 50
@@ -486,7 +488,7 @@ class XPWebsocketAPI(XPRestAPI):
 
                 now = datetime.now()
                 if total_reads == 0:
-                    logger.debug(f"..first message at {now} ({round((now - start_time).seconds, 2)} secs.)")
+                    logger.debug(f"..first message at {now} ({round((now - start_time).seconds, 2)} secs.) {'<'*attention}")
                     self.RECEIVE_TIMEOUT = 5  # when connected, check less often, message will arrive
 
                 total_reads = total_reads + 1
@@ -650,6 +652,8 @@ class XPWebsocketAPI(XPRestAPI):
                 if self.ws_thread.is_alive():
                     logger.warning("..thread may hang in ws.receive()..")
                 logger.info("..websocket listener stopped")
+            if self.on_stop is not None:
+                self.on_stop(connected=self.connected)
         else:
             logger.debug("websocket listener not running")
 
