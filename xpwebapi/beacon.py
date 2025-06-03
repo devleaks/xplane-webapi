@@ -149,6 +149,16 @@ class XPBeaconMonitor:
         self.my_ips = list_my_ips()
         self.status = BEACON_MONITOR_STATUS.NOT_RUNNING
 
+    @property
+    def status(self) -> BEACON_MONITOR_STATUS:
+        """Should use REST API for some purpose"""
+        return self._status
+
+    @status.setter
+    def status(self, status: BEACON_MONITOR_STATUS):
+        logger.info(f"Beacon monitor status is now {BEACON_MONITOR_STATUS(status).name}")
+        self._status = status
+
     # ################################
     # Internal functions
     #
@@ -163,7 +173,11 @@ class XPBeaconMonitor:
         Connected is True is beacon is detected at regular interval, False otherwise
         """
         if self._callback is not None:
-            self._callback(connected=connected, beacon_data=beacon_data, same_host=same_host)
+            try:
+                self._callback(connected=connected, beacon_data=beacon_data, same_host=same_host)
+            except:
+                logger.warning("issue calling beacon callback", exc_info=True)
+
 
     def find_ip(self) -> BeaconData | None:
         """Returns first occurence of X-Plane beacon data

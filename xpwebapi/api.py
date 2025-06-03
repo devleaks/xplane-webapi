@@ -182,6 +182,16 @@ class API(ABC):
         self._use_rest = use_rest
 
     @property
+    def status(self) -> CONNECTION_STATUS:
+        """Should use REST API for some purpose"""
+        return self._status
+
+    @status.setter
+    def status(self, status: CONNECTION_STATUS):
+        logger.info(f"API status is now {CONNECTION_STATUS(status).name}")
+        self._status = status
+
+    @property
     @abstractmethod
     def connected(self) -> bool:
         """Whether X-Plane API is reachable through this instance"""

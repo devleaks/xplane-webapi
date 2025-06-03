@@ -63,10 +63,10 @@ class XPWebsocketAPI(XPRestAPI):
         self._stats = {}
 
         #
-        self.on_start = None  # func(connected: bool)
-        self.on_stop = None  # func(connected: bool)
-        self.on_dataref_update = None  # func(dataref:str, value)
-        self.on_command_active = None  # func(command:str, active: bool)
+        self.after_on_start = None  # Called after startup of monitor, protoype: `func(connected: bool)`
+        self.before_on_stop = None  # Called before stopping of monitor, protoype: `func(connected: bool)`
+        self.on_dataref_update = None  # Called on dataref update event, for each indivudual dataref, prototype: `func(dataref:str, value: int|float|str)`
+        self.on_command_active = None  # Called on command active event, for each indivudual command, prototype: `func(command:str, active: bool)`
 
     @property
     def ws_url(self) -> str:
@@ -530,7 +530,10 @@ class XPWebsocketAPI(XPRestAPI):
                             if meta is not None:
                                 webapi_logger.info(f"CMD : {meta.name}={value}")
                                 if self.on_command_active is not None:
-                                    self.on_command_active(command=meta.name, active=value)
+                                    try:
+                                        self.on_command_active(command=meta.name, active=value)
+                                    except:
+                                        logger.warning("issue calling on_command_active", exc_info=True)
                             else:
                                 logger.warning(f"no command for id={self.all_commands.equiv(ident=int(ident))}")
                     #
@@ -579,7 +582,10 @@ class XPWebsocketAPI(XPRestAPI):
                                 for idx, v1 in zip(current_indices, value):
                                     d1 = f"{meta.name}[{idx}]"
                                     if self.on_dataref_update is not None:
-                                        self.on_dataref_update(dataref=d1, value=v1)
+                                        try:
+                                            self.on_dataref_update(dataref=d1, value=v1)
+                                        except:
+                                            logger.warning("issue calling on_dataref_update (multi)", exc_info=True)
                                         # print(f"{d1}={v1}")
                                 # alternative:
                                 # for d in dataref:
@@ -590,7 +596,10 @@ class XPWebsocketAPI(XPRestAPI):
                                 # 2. Scalar value
                                 parsed_value = dataref.parse_raw_value(value)
                                 if self.on_dataref_update is not None:
-                                    self.on_dataref_update(dataref=dataref.path, value=parsed_value)
+                                    try:
+                                        self.on_dataref_update(dataref=dataref.path, value=parsed_value)
+                                    except:
+                                        logger.warning("issue calling on_dataref_update", exc_info=True)
                                     # print(f"{dataref.name}={parsed_value}")
                     #
                     #
@@ -632,8 +641,11 @@ class XPWebsocketAPI(XPRestAPI):
         # then reload datarefs from current page of each deck
         self.reload_caches()
         self.rebuild_dataref_ids()
-        if self.on_start is not None:
-            self.on_start(connected=self.connected)
+        if self.after_on_start is not None:
+            try:
+                self.after_on_start(connected=self.connected)
+            except:
+                logger.warning("issue calling after_on_start", exc_info=True)
         logger.info(f"{type(self).__name__} started")
 
     def stop(self):
@@ -643,6 +655,11 @@ class XPWebsocketAPI(XPRestAPI):
             #     self.all_datarefs.save("datarefs.json")
             # if self.all_commands is not None:
             #     self.all_commands.save("commands.json")
+            if self.before_on_stop is not None:
+                try:
+                    self.before_on_stop(connected=self.connected)
+                except:
+                    logger.warning("issue calling before_on_stop", exc_info=True)
             self.ws_event.set()
             if self.ws_thread is not None and self.ws_thread.is_alive():
                 logger.debug("stopping websocket listener..")
@@ -652,8 +669,6 @@ class XPWebsocketAPI(XPRestAPI):
                 if self.ws_thread.is_alive():
                     logger.warning("..thread may hang in ws.receive()..")
                 logger.info("..websocket listener stopped")
-            if self.on_stop is not None:
-                self.on_stop(connected=self.connected)
         else:
             logger.debug("websocket listener not running")
 
