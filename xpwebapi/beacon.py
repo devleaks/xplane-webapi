@@ -86,6 +86,9 @@ class BEACON_MONITOR_STATUS(IntEnum):
     DETECTING_BEACON = 2  # Beacon running and beacon detected
 
 
+BEACON_TIMEOUT = 3.0  # seconds, time the socket will wait for beacon, beacon is broadcast every second or less, unless X-Plane is busy busy
+
+
 class XPBeaconMonitor:
     """X-Plane «beacon» monitor.
 
@@ -99,7 +102,7 @@ class XPBeaconMonitor:
         MCAST_PORT (int): default 49707 (MCAST_PORT was 49000 for XPlane10)
         BEACON_TIMEOUT (float): default 3.0 seconds
         MAX_WARNING (int): After MAX_WARNING warnings of "no connection", stops reporting "no connection". Default 3.
-        RECONNECT_TIMEOUT (float): Times between attempts to reconnect to X-Plane when not connected (default 10 seconds)
+        BEACON_PROBING_TIMEOUT (float): Times between attempts to reconnect to X-Plane when not connected (default 10 seconds)
         WARN_FREQ (float): Report absence of connection every WARN_FREQ seconds. Default 10 seconds.
 
         socket (socket.socket | None): Socket to multicast listener
@@ -123,30 +126,33 @@ class XPBeaconMonitor:
 
     beacon = xpwebapi.beacon()
     beacon.set_callback(callback)
-    beacon.connect()
+    beacon.start_monitor()
     ```
 
     """
 
-    # constants
+    # A few parameters
+    #
     MCAST_GRP = "239.255.1.1"
     MCAST_PORT = 49707  # (MCAST_PORT was 49000 for XPlane10)
-    BEACON_TIMEOUT = 3.0  # seconds
+
+    BEACON_PROBING_TIMEOUT = 10.0  # seconds, times between attempts to capture beacon (times between executions of get_beacon())
+
     MAX_WARNING = 3  # after MAX_WARNING warnings of "no connection", stops reporting "no connection"
-    RECONNECT_TIMEOUT = 10  # seconds, times between attempts to reconnect to X-Plane when not connected
-    WARN_FREQ = 10  # seconds
+    WARN_FREQ = 10  # attempts: Every so often, report warning to show beacon monitor is alive, receiving beacon or not
 
     def __init__(self):
         # Open a UDP Socket to receive on Port 49000
         self.socket = None
         self.data: BeaconData | None = None
-        self.should_not_connect: threading.Event = threading.Event()
-        self.should_not_connect.set()
+        self.not_monitoring: threading.Event = threading.Event()
+        self.not_monitoring.set()
 
         self._connect_thread: threading.Thread | None = None
         self._already_warned = 0
         self._callback: Callable | None = None
         self.my_ips = list_my_ips()
+        self._status = None
         self.status = BEACON_MONITOR_STATUS.NOT_RUNNING
 
     @property
@@ -154,10 +160,16 @@ class XPBeaconMonitor:
         """Should use REST API for some purpose"""
         return self._status
 
+    @property
+    def status_str(self) -> str:
+        """Should use REST API for some purpose"""
+        return f"{BEACON_MONITOR_STATUS(self._status).name}"
+
     @status.setter
     def status(self, status: BEACON_MONITOR_STATUS):
-        logger.info(f"Beacon monitor status is now {BEACON_MONITOR_STATUS(status).name}")
-        self._status = status
+        if self._status != status:
+            self._status = status
+            logger.info(f"Beacon monitor status is now {self.status_str}")
 
     # ################################
     # Internal functions
@@ -178,14 +190,14 @@ class XPBeaconMonitor:
             except:
                 logger.warning("issue calling beacon callback", exc_info=True)
 
+    def get_beacon(self, timeout: float = BEACON_TIMEOUT) -> BeaconData | None:
+        """Attemps to capture beacon. Returns first occurence of X-Plane beacon data encountered
+           or None if no beacon was detected before timeout.
 
-    def find_ip(self) -> BeaconData | None:
-        """Returns first occurence of X-Plane beacon data
+        It returns the first beacon it receives.
 
-        Find the IP of XPlane Host in Network.
-        It takes the first one it can find.
+        BeaconData is a python dataclass with the following attributes:
 
-        BeaconData is a python dataclass with the following attrbiutes:
         ```python
         class BeaconData:
             host: str
@@ -195,6 +207,9 @@ class XPBeaconMonitor:
             role: int
 
         ```
+
+        Args:
+            timeout (float): Time to wait for receiving beacon (typical range 1 to 10 seconds.)
 
         Returns:
             BeaconData: beacon information or None if not connected/not reachable/no beacon
@@ -216,11 +231,11 @@ class XPBeaconMonitor:
             sock.bind((self.MCAST_GRP, self.MCAST_PORT))
         mreq = struct.pack("=4sl", socket.inet_aton(self.MCAST_GRP), socket.INADDR_ANY)
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-        sock.settimeout(XPBeaconMonitor.BEACON_TIMEOUT)
+        sock.settimeout(timeout)
 
         # receive data
         try:
-            packet, sender = sock.recvfrom(1472)
+            packet, sender = sock.recvfrom(1472)  # blocks timeout secs.
             logger.debug(f"XPlane Beacon: {packet.hex()}")
 
             # decode data
@@ -275,7 +290,7 @@ class XPBeaconMonitor:
 
         return self.data
 
-    def connect_loop(self):
+    def monitor(self):
         """
         Trys to connect to X-Plane indefinitely until should_not_connect Event is set.
         If a connection fails, drops, disappears, will try periodically to restore it.
@@ -283,107 +298,104 @@ class XPBeaconMonitor:
         logger.debug("starting..")
         cnt = 0
         self.status = BEACON_MONITOR_STATUS.RUNNING
-        while self.should_not_connect is not None and not self.should_not_connect.is_set():
-            if not self.connected:
+        while self.not_monitoring is not None and not self.not_monitoring.is_set():
+            if not self.receiving_beacon:
                 try:
-                    beacon_data = self.find_ip()  # this provokes attempt to connect
-                    if self.connected:
+                    beacon_data = self.get_beacon()  # this provokes attempt to connect
+                    if self.receiving_beacon:
                         self.status = BEACON_MONITOR_STATUS.DETECTING_BEACON
                         self._already_warned = 0
                         logger.info(f"beacon: {self.data}")
                         self.callback(connected=True, beacon_data=beacon_data, same_host=self.same_host())  # connected
                 except XPlaneVersionNotSupported:
                     self.data = None
-                    logger.error("..X-Plane Version not supported..")
+                    logger.error("..X-Plane version not supported..")
                 except XPlaneIpNotFound:
                     if self.status == BEACON_MONITOR_STATUS.DETECTING_BEACON:
-                        logger.warning("disconnected")
+                        logger.warning("no beacon")
                         self.status = BEACON_MONITOR_STATUS.RUNNING
                         self.callback(False, None, None)  # disconnected
                     self.data = None
                     if cnt % XPBeaconMonitor.WARN_FREQ == 0:
-                        logger.error(f"..X-Plane instance not found on local network.. ({datetime.now().strftime('%H:%M:%S')})")
+                        logger.error(f"..X-Plane beacon not found on local network.. ({datetime.now().strftime('%H:%M:%S')})")
                     cnt = cnt + 1
-                if not self.connected:
-                    self.should_not_connect.wait(XPBeaconMonitor.RECONNECT_TIMEOUT)
-                    logger.debug("..trying..")
+                if not self.receiving_beacon:
+                    self.not_monitoring.wait(XPBeaconMonitor.BEACON_PROBING_TIMEOUT)
+                    logger.debug("..listening for beacon..")
             else:
-                self.should_not_connect.wait(XPBeaconMonitor.RECONNECT_TIMEOUT)  # could be n * RECONNECT_TIMEOUT
-                logger.debug("..monitoring connection..")
+                self.not_monitoring.wait(XPBeaconMonitor.BEACON_PROBING_TIMEOUT)  # could be n * BEACON_PROBING_TIMEOUT
+                logger.debug("..beacon received..")
         self.status = BEACON_MONITOR_STATUS.NOT_RUNNING
-        self.callback(False, None, None)  # disconnected
+        # self.callback(False, None, None)  # we stopped the monitor, beacon might still be alive
         logger.debug("..ended")
 
     # ################################
     # Interface
     #
     @property
-    def connected(self) -> bool:
+    def receiving_beacon(self) -> bool:
         """Returns whether beacon from X-Plane is periodically received"""
         res = self.data is not None
         if not res and not self._already_warned > self.MAX_WARNING:
-            if self._already_warned == self.MAX_WARNING:
-                logger.warning("no connection (last warning)")
-            else:
-                logger.warning("no connection")
+            if self._already_warned <= self.MAX_WARNING:
+                logger.warning(f"no connection{'' if self._already_warned < self.MAX_WARNING else ' (last warning)'}")
             self._already_warned = self._already_warned + 1
         return res
+
+    def same_host(self) -> bool:
+        """Attempt to determine if X-Plane is running on local host (where beacon monitor runs) or remote host"""
+        if self.receiving_beacon:
+            r = self.data.host in self.my_ips
+            logger.debug(f"{self.data.host}{'' if r else ' not'} in {self.my_ips}")
+            return r
+        return False
 
     def set_callback(self, callback: Callable | None = None):
         """Set callback function
 
         Callback function will be called whenever the status of the "connection" changes.
 
-        Callback function prototype
-        ```python
-        callback(connected: bool)
-        ```
-
         Args:
             callback (Callable): Callback function
+                Callback function prototype
+                ```python
+                callback(connected: bool, beacon_data: BeaconData | None, same_host: bool | None)
+                ```
 
         Connected is True is beacon is detected at regular interval, False otherwise
         """
         self._callback = callback
 
-    def connect(self):
+    def start_monitor(self):
         """Starts beacon monitor"""
-        if self.should_not_connect.is_set():
-            self.should_not_connect.clear()
-            self._connect_thread = threading.Thread(target=self.connect_loop, name="XPlane::Beacon Monitor")
+        if self.not_monitoring.is_set():
+            self.not_monitoring.clear()  # f"{__name__}::{type(self).__name__}"
+            self._connect_thread = threading.Thread(target=self.monitor, name=f"{__name__}::monitor")
             self._connect_thread.start()
-            logger.debug("connect_loop started")
+            logger.debug("monitor started")
         else:
-            logger.debug("connect_loop already started")
+            logger.debug("monitor already started")
 
-    def disconnect(self):
+    def stop_monitor(self):
         """Terminates beacon monitor"""
-        logger.debug("disconnecting..")
-        if not self.should_not_connect.is_set():
+        logger.debug("stopping monitor..")
+        if not self.not_monitoring.is_set():
             self.data = None
-            self.should_not_connect.set()
-            wait = XPBeaconMonitor.RECONNECT_TIMEOUT
-            logger.debug(f"..asked to stop connect_loop.. (this may last {wait} secs.)")
+            self.not_monitoring.set()
+            wait = XPBeaconMonitor.BEACON_PROBING_TIMEOUT + BEACON_TIMEOUT
+            logger.debug(f"..asked to stop monitor.. (this may last {wait} secs.)")  # status will change in thread if it finishes gracefully
             if self._connect_thread is not None:
                 self._connect_thread.join(timeout=wait)
                 if self._connect_thread.is_alive():
                     logger.warning("..thread may hang..")
-            logger.debug("..disconnected")
+            logger.debug("..monitor stopped")
         else:
-            if self.connected:
+            if self.receiving_beacon:
                 self.data = None
-                logger.debug("..connect_loop not running..disconnected")
+                logger.debug("..monitor not running..stopped")
             else:
-                logger.debug("..not connected")
+                logger.debug("..monitor not running")
         self.status = BEACON_MONITOR_STATUS.NOT_RUNNING
-
-    def same_host(self) -> bool:
-        """Attempt to determine if X-Plane is running on local host (where beacon monitor runs) or remote host"""
-        if self.connected:
-            r = self.data.host in self.my_ips
-            logger.debug(f"{self.data.host}{'' if r else ' not'} in {self.my_ips}")
-            return r
-        return False
 
 
 # ######################################
@@ -399,4 +411,4 @@ if __name__ == "__main__":
             print(same_host)
 
     beacon.set_callback(callback)
-    beacon.connect()
+    beacon.start_monitor()
