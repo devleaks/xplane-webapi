@@ -19,8 +19,8 @@ def callback(connected: bool, beacon_data: xpwebapi.BeaconData, same_host: bool)
 
 beacon.set_callback(callback)
 
-beacon.connect()
+beacon.start_monitor()
 sometime=10  # secs
 print(f"attempting {sometime} seconds")
 time.sleep(sometime)
-beacon.disconnect()
+beacon.stop_monitor()

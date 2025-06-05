@@ -3,7 +3,7 @@
 See [X-Plane Web API](https://developer.x-plane.com/article/x-plane-web-api/).
 
 
-[Documentation](https://devleaks.github.io/xplane-webapi/)
+[Documentation](https://devleaks.github.io/xplane-webapi/usage/)
 
 
 # Installation
