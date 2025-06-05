@@ -157,13 +157,13 @@ class XPBeaconMonitor:
         self._status = BEACON_MONITOR_STATUS.RUNNING  # init != first value
         self.status = BEACON_MONITOR_STATUS.NOT_RUNNING  # first value set through api
 
-        #stats
+        # stats
         self._attempts_to_detect = 0
         self._beacon_detected = 0
         self._timeout = 0
         self._latest_timeout = 0
-        self._consecutive_receive = 0
-        self._consecutive_failure = 0
+        self._consecutive_receives = 0
+        self._consecutive_failures = 0
 
     @property
     def status(self) -> BEACON_MONITOR_STATUS:
@@ -305,6 +305,17 @@ class XPBeaconMonitor:
 
         return self.data
 
+    @property
+    def consecutive_failures(self) -> int:
+        """Returns number of recent consecutive failures
+
+        This can be used to detect temporary failures. When X-Plane is extremely busy, it may not send a beacon, or beacon emission can be delayed.
+        X-Plane is up and running but no beacon has been detected. "Missing" a few detections in a row does not mean X-Plane is not running.
+        This `consecutive_failures` allows to wait for a few failures to detect X-Plane before concluding its unavailability.
+
+        """
+        return self._consecutive_failures
+
     def monitor(self):
         """
         Trys to connect to X-Plane indefinitely until should_not_connect Event is set.
@@ -312,14 +323,14 @@ class XPBeaconMonitor:
         """
         logger.debug("starting..")
         self.status = BEACON_MONITOR_STATUS.RUNNING
-        while not self.not_monitoring.is_set():
+        while self.is_running:
             if not self.receiving_beacon:
                 try:
                     beacon_data = self.get_beacon()  # this provokes attempt to connect
                     if self.receiving_beacon:
                         self.status = BEACON_MONITOR_STATUS.DETECTING_BEACON
-                        self._consecutive_receive = self._consecutive_receive + 1
-                        self._consecutive_failure = 0
+                        self._consecutive_receives = self._consecutive_receives + 1
+                        self._consecutive_failures = 0
                         self._already_warned = 0
                         logger.info(f"beacon: {self.data}")
                         self.callback(connected=True, beacon_data=beacon_data, same_host=self.same_host())  # connected
@@ -332,10 +343,10 @@ class XPBeaconMonitor:
                         self.status = BEACON_MONITOR_STATUS.RUNNING
                         self.callback(False, None, None)  # disconnected
                     self.data = None
-                    if self._consecutive_failure % XPBeaconMonitor.WARN_FREQ == 0:
+                    if self._consecutive_failures % XPBeaconMonitor.WARN_FREQ == 0:
                         logger.error(f"..X-Plane beacon not found on local network.. ({datetime.now().strftime('%H:%M:%S')})")
-                    self._consecutive_failure = self._consecutive_failure + 1
-                    self._consecutive_receive = 0
+                    self._consecutive_failures = self._consecutive_failures + 1
+                    self._consecutive_receives = 0
                 if not self.receiving_beacon:
                     self.not_monitoring.wait(XPBeaconMonitor.BEACON_PROBING_TIMEOUT)
                     logger.debug("..listening for beacon..")
@@ -393,10 +404,14 @@ class XPBeaconMonitor:
         else:
             logger.debug("monitor already started")
 
+    @property
+    def is_running(self) -> bool:
+        return not self.not_monitoring.is_set()
+
     def stop_monitor(self):
         """Terminates beacon monitor"""
         logger.debug("stopping monitor..")
-        if not self.not_monitoring.is_set():
+        if self.is_running:
             self.data = None
             self.not_monitoring.set()
             wait = XPBeaconMonitor.BEACON_PROBING_TIMEOUT + BEACON_TIMEOUT

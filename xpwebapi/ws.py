@@ -19,7 +19,7 @@ from .rest import XPRestAPI
 
 # local logging
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+# logger.setLevel(logging.DEBUG)
 
 XP_MIN_VERSION = 121400
 XP_MIN_VERSION_STR = "12.1.4"
@@ -31,7 +31,16 @@ XP_MAX_VERSION_STR = "12.1.4"
 # WEBSOCKET API
 #
 class XPWebsocketAPI(XPRestAPI):
-    """X-Plane Websocket API Client Handler
+    """X-Plane Websocket Client.
+
+    The XPWebsocketAPI is a client interface to X-Plane Web API, Websocket server.
+
+    The XPWebsocketAPI has a _connection monitor_ (XPWebsocketAPI.connection_monitor) that can be started (XPWebsocketAPI.connect) and stopped (XPWebsocketAPI.disconnect).
+    The monitor tests for REST API reachability, and if reachable, creates a Websocket.
+    If the websocket exists and is opened, requests can be made through it and responses expected.
+
+    To handle responses, a _receiver_ (XPWebsocketAPI.ws_receiver) can be started (XPWebsocketAPI.start) and stopped (XPWebsocketAPI.stop)
+    to process responses coming through the websocket.
 
     See https://developer.x-plane.com/article/x-plane-web-api/#Websockets_API.
     """
@@ -50,14 +59,15 @@ class XPWebsocketAPI(XPRestAPI):
         self.local_ip = socket.gethostbyname(hostname)
 
         self.ws = None  # None = no connection
-        self.ws_event = threading.Event()
-        self.ws_event.set()  # means it is off
+        self.ws_lsnr_not_running = threading.Event()
+        self.ws_lsnr_not_running.set()  # means it is off
         self.ws_thread = None
 
         self.req_number = 0
         self._requests = {}
 
-        self.should_not_connect = None  # threading.Event()
+        self.should_not_connect = threading.Event()
+        self.should_not_connect.set()  # starts off
         self.connect_thread = None  # threading.Thread()
         self._already_warned = 0
         self._stats = {}
@@ -67,6 +77,11 @@ class XPWebsocketAPI(XPRestAPI):
         self.before_on_stop = None  # Called before stopping of monitor, protoype: `func(connected: bool)`
         self.on_dataref_update = None  # Called on dataref update event, for each indivudual dataref, prototype: `func(dataref:str, value: int|float|str)`
         self.on_command_active = None  # Called on command active event, for each indivudual command, prototype: `func(command:str, active: bool)`
+        self.on_request_feedback = (
+            self._on_request_feedback
+        )  # Called on command request feedback, for each indivudua feedback, prototype: `func(request_id:int, payload: dict)`
+        self.on_open = None  # called when websocket sucessfully opened, prototype: `func()`
+        self.on_close = None  # called when websocket closed, prototype: `func()`
 
     @property
     def ws_url(self) -> str:
@@ -97,17 +112,26 @@ class XPWebsocketAPI(XPRestAPI):
             self._already_warned = self._already_warned + 1
         return not res
 
+    @property
+    def websocket_connection_monitor_running(self) -> bool:
+        return not self.should_not_connect.is_set()
+
     def connect_websocket(self):
-        """Create and open Websocket connection if it is reachable"""
+        """Create and open Websocket connection if REST API is reachable"""
         if self.ws is None:
             try:
-                if super().connected:  # if rest API reachable...
+                if self.rest_api_reachable:
                     url = self.ws_url
                     if url is not None:
                         self.ws = Client.connect(url)
                         self.status = CONNECTION_STATUS.WEBSOCKET_CONNNECTED
                         self.reload_caches()
                         logger.info(f"websocket opened at {url}")
+                        if self.on_open is not None:
+                            try:
+                                self.on_open()
+                            except:
+                                logger.error("websocket on_open", exc_info=True)
                     else:
                         logger.warning(f"web socket url is none {url}")
             except:
@@ -116,7 +140,7 @@ class XPWebsocketAPI(XPRestAPI):
             logger.warning("already connected")
 
     def disconnect_websocket(self, silent: bool = False):
-        """Closes Websocket connection"""
+        """Gracefully closes Websocket connection"""
         if self.ws is not None:
             self.ws.close()
             self.ws = None
@@ -124,11 +148,16 @@ class XPWebsocketAPI(XPRestAPI):
             dummy = super().connected  # set REST API reachability status
             if not silent:
                 logger.info("websocket closed")
+            if self.on_close is not None:
+                try:
+                    self.on_close()
+                except:
+                    logger.error("websocket on_close", exc_info=True)
         else:
             if not silent:
                 logger.warning("already disconnected")
 
-    def connect_loop(self):
+    def connection_monitor(self):
         """
         Attempts to connect to X-Plane Websocket indefinitely until self.should_not_connect is set.
         If a connection fails, drops, disappears, will try periodically to restore it.
@@ -139,7 +168,7 @@ class XPWebsocketAPI(XPRestAPI):
         number_of_timeouts = 0
         to_count = 0
         noconn = 0
-        while self.should_not_connect is not None and not self.should_not_connect.is_set():
+        while not self.should_not_connect.is_set():
             if not self.connected:
                 try:
                     if noconn % WARN_FREQ == 0:
@@ -164,16 +193,16 @@ class XPWebsocketAPI(XPRestAPI):
                             else:
                                 logger.info(f"X-Plane version requirements {xpmin}<= {curr} <={xpmax} satisfied")
                         logger.debug("..connected, starting websocket listener..")
-                        self.start()
+                        self.start()  # calls local start to start websocket listener
                         logger.info("..websocket listener started..")
                     else:
-                        if self.ws_event is not None and not self.ws_event.is_set():
+                        if self.ws_lsnr_not_running is not None and self.websocket_listener_running:
                             number_of_timeouts = number_of_timeouts + 1
                             if number_of_timeouts <= MAX_TIMEOUT_COUNT:  # attemps to reconnect
                                 logger.info(f"timeout received ({number_of_timeouts}/{MAX_TIMEOUT_COUNT})")  # , exc_info=True
                             if number_of_timeouts >= MAX_TIMEOUT_COUNT:  # attemps to reconnect
                                 logger.warning("too many times out, websocket listener terminated")  # ignore
-                                self.ws_event.set()
+                                self.ws_lsnr_not_running.set()
 
                         if number_of_timeouts >= MAX_TIMEOUT_COUNT and to_count % WARN_FREQ == 0:
                             logger.error(f"..X-Plane instance not found on local network.. ({datetime.now().strftime('%H:%M:%S')})")
@@ -197,11 +226,11 @@ class XPWebsocketAPI(XPRestAPI):
     #
     def connect(self, reload_cache: bool = False):
         """
-        Starts attempting to connect to Websocket.
+        Starts connection to Websocket monitor
         """
-        if self.should_not_connect is None:
-            self.should_not_connect = threading.Event()
-            self.connect_thread = threading.Thread(target=self.connect_loop, name=f"{type(self).__name__}::Connection Monitor")
+        if self.should_not_connect.is_set():
+            self.should_not_connect.clear()
+            self.connect_thread = threading.Thread(target=self.connection_monitor, name=f"{type(self).__name__}::Connection Monitor")
             self.connect_thread.start()
             logger.debug("connection monitor started")
         else:
@@ -211,18 +240,17 @@ class XPWebsocketAPI(XPRestAPI):
 
     def disconnect(self):
         """
-        Stop attempting to connect to Websocket.
+        Ends connection to Websocket monitor and closes websocket
         """
-        if self.should_not_connect is not None:
+        if not self.should_not_connect.is_set():
             logger.debug("disconnecting..")
-            self.disconnect_websocket(silent=True)
-            self.should_not_connect.set()
-            wait = self.RECONNECT_TIMEOUT
+            self.should_not_connect.set()  # first stop the connection monitor.
+            wait = self.RECONNECT_TIMEOUT  # If we close the connection first, it might be reopened by the connection monitor
             logger.debug(f"..asked to stop connection monitor.. (this may last {wait} secs.)")
             self.connect_thread.join(timeout=wait)
             if self.connect_thread.is_alive():
                 logger.warning("..thread may hang..")
-            self.should_not_connect = None
+            self.disconnect_websocket(silent=True)  # then we close the websocket
             logger.debug("..disconnected")
         else:
             if self.connected:
@@ -463,7 +491,18 @@ class XPWebsocketAPI(XPRestAPI):
     # ################################
     # Start/Run/Stop
     #
-    def ws_receiver(self):
+    def _on_request_feedback(self, request_id: int, payload: dict):
+        FAILED = "failed"
+        result = payload.get(REST_KW.SUCCESS.value)
+        if not result:
+            errmsg = REST_KW.SUCCESS.value if result else FAILED
+            errmsg = errmsg + " " + payload.get("error_message", "no error message")
+            errmsg = errmsg + " (" + payload.get("error_code", "no error code") + ")"
+            logger.warning(f"req. {request_id}: {errmsg}")
+        else:
+            logger.debug(f"req. {request_id}: {REST_KW.SUCCESS.value if payload[REST_KW.SUCCESS.value] else FAILED}")
+
+    def ws_listener(self):
         """Read and decode websocket messages and calls back"""
         logger.info("starting websocket listener..")
         self.RECEIVE_TIMEOUT = 1  # when not connected, checks often
@@ -475,20 +514,22 @@ class XPWebsocketAPI(XPRestAPI):
         start_time = datetime.now()
         last_read_ts = start_time
         total_read_time = 0.0
-        while not self.ws_event.is_set():
+        self.status = CONNECTION_STATUS.LISTENING_FOR_DATA
+        while self.websocket_listener_running:
             try:
                 message = self.ws.receive(timeout=self.RECEIVE_TIMEOUT)
                 if message is None:
-                    to_count = to_count + 1
                     if to_count % TO_COUNT_INFO == 0:
-                        logger.info("waiting for data from simulator..")  # at {datetime.now()}")
+                        logger.info("waiting for response from simulator..")  # at {datetime.now()}")
                     elif to_count % TO_COUNT_DEBUG == 0:
-                        logger.debug("waiting for data from simulator..")  # at {datetime.now()}")
+                        logger.debug("waiting for response from simulator..")  # at {datetime.now()}")
+                    to_count = to_count + 1
                     continue
 
                 now = datetime.now()
                 if total_reads == 0:
-                    logger.debug(f"..first message at {now} ({round((now - start_time).seconds, 2)} secs.) {'<'*attention}")
+                    logger.info(f"..first message at {now} ({round((now - start_time).seconds, 2)} secs.) {'<'*attention}")
+                    self.status = CONNECTION_STATUS.RECEIVING_DATA
                     self.RECEIVE_TIMEOUT = 5  # when connected, check less often, message will arrive
 
                 total_reads = total_reads + 1
@@ -509,14 +550,12 @@ class XPWebsocketAPI(XPRestAPI):
                         webapi_logger.info(f"<<RCV  {data}")
                         req_id = data.get(REST_KW.REQID.value)
                         if req_id is not None:
-                            self._requests[req_id] = data[REST_KW.SUCCESS.value]
-                        if not data[REST_KW.SUCCESS.value]:
-                            errmsg = REST_KW.SUCCESS.value if data[REST_KW.SUCCESS.value] else "failed"
-                            errmsg = errmsg + " " + data.get("error_message")
-                            errmsg = errmsg + " (" + data.get("error_code") + ")"
-                            logger.warning(f"req. {req_id}: {errmsg}")
-                        else:
-                            logger.debug(f"req. {req_id}: {REST_KW.SUCCESS.value if data[REST_KW.SUCCESS.value] else 'failed'}")
+                            self._requests[req_id] = data.get(REST_KW.SUCCESS.value)
+                            if self.on_request_feedback is not None:
+                                try:
+                                    self.on_request_feedback(request_id=req_id, payload=data)
+                                except:
+                                    logger.warning("issue calling on_request_feedback", exc_info=True)
                     #
                     #
                     elif resp_type == REST_RESPONSE.COMMAND_ACTIVE.value:
@@ -612,7 +651,9 @@ class XPWebsocketAPI(XPRestAPI):
             except ConnectionClosed:
                 logger.warning("websocket connection closed")
                 self.ws = None
-                self.ws_event.set()
+                self.ws_lsnr_not_running.set()
+                self.status = CONNECTION_STATUS.WEBSOCKET_DISCONNNECTED  # should check rest api reachable
+                dummy = super().connected
 
             except:
                 logger.error("ws_receiver: other error", exc_info=True)
@@ -620,8 +661,19 @@ class XPWebsocketAPI(XPRestAPI):
         if self.ws is not None:  # in case we did not receive a ConnectionClosed event
             self.ws.close()
             self.ws = None
+            self.status = CONNECTION_STATUS.WEBSOCKET_DISCONNNECTED  # should check rest api reachable
+            dummy = super().connected
+            if self.on_close is not None:
+                try:
+                    self.on_close()
+                except:
+                    logger.error("websocket on_close", exc_info=True)
 
         logger.info("..websocket listener terminated")
+
+    @property
+    def websocket_listener_running(self) -> bool:
+        return not self.ws_lsnr_not_running.is_set()
 
     def start(self, release: bool = True):
         """Start Websocket monitoring"""
@@ -629,9 +681,9 @@ class XPWebsocketAPI(XPRestAPI):
             logger.warning("not connected. cannot not start.")
             return
 
-        if self.ws_event.is_set():  # Thread for X-Plane datarefs
-            self.ws_event.clear()
-            self.ws_thread = threading.Thread(target=self.ws_receiver, name="XPlane::Websocket Listener")
+        if not self.websocket_listener_running:  # Thread for X-Plane datarefs
+            self.ws_lsnr_not_running.clear()
+            self.ws_thread = threading.Thread(target=self.ws_listener, name="XPlane::Websocket Listener")
             self.ws_thread.start()
             logger.info("websocket listener started")
         else:
@@ -650,7 +702,7 @@ class XPWebsocketAPI(XPRestAPI):
 
     def stop(self):
         """Stop Websocket monitoring"""
-        if not self.ws_event.is_set():
+        if self.websocket_listener_running:
             # if self.all_datarefs is not None:
             #     self.all_datarefs.save("datarefs.json")
             # if self.all_commands is not None:
@@ -660,7 +712,7 @@ class XPWebsocketAPI(XPRestAPI):
                     self.before_on_stop(connected=self.connected)
                 except:
                     logger.warning("issue calling before_on_stop", exc_info=True)
-            self.ws_event.set()
+            self.ws_lsnr_not_running.set()
             if self.ws_thread is not None and self.ws_thread.is_alive():
                 logger.debug("stopping websocket listener..")
                 wait = self.RECEIVE_TIMEOUT

@@ -81,7 +81,8 @@ class CONNECTION_STATUS(IntEnum):
     REST_API_NOT_REACHABLE = 8
     WEBSOCKET_CONNNECTED = 3
     WEBSOCKET_DISCONNNECTED = 9
-    RECEIVING_DATA = 4
+    LISTENING_FOR_DATA = 4
+    RECEIVING_DATA = 5
 
 
 # #############################################
@@ -168,9 +169,16 @@ class API(ABC):
     """API Abstract class with connection information"""
 
     def __init__(self, host: str, port: int, api: str, api_version: str) -> None:
-        self.set_network(host=host, port=port, api=api, api_version=api_version)
+        self.host = None
+        self.port = None
+        self.version = None
+        self._api_root_path = None
+        self._api_version = None
         self._use_rest = True  # only option on startup
+        self._status = None
         self.status = CONNECTION_STATUS.NO_BEACON
+
+        self.set_network(host=host, port=port, api=api, api_version=api_version)
 
     @property
     def use_rest(self) -> bool:
@@ -186,10 +194,16 @@ class API(ABC):
         """Should use REST API for some purpose"""
         return self._status
 
+    @property
+    def status_str(self) -> str:
+        """Should use REST API for some purpose"""
+        return f"{CONNECTION_STATUS(self._status).name}"
+
     @status.setter
     def status(self, status: CONNECTION_STATUS):
-        logger.info(f"API status is now {CONNECTION_STATUS(status).name}")
-        self._status = status
+        if self._status != status:
+            self._status = status
+            logger.info(f"API status is now {self.status_str}")
 
     @property
     @abstractmethod
@@ -197,20 +211,42 @@ class API(ABC):
         """Whether X-Plane API is reachable through this instance"""
         return False
 
-    def set_network(self, host: str, port: int, api: str, api_version: str):
-        """Set network and API parameters for connection"""
-        self.host = host
-        self.port = port
-        self._api_root_path = api
-        self.version = api_version  # v1, v2, etc.
-        if self.version.startswith("/"):
-            self.version = self.version[1:]
+    def set_network(self, host: str, port: int, api: str, api_version: str) -> bool:
+        """Set network and API parameters for connection
 
-        if not self._api_root_path.startswith("/"):
-            self._api_root_path = "/" + api
-        self._api_version = api_version  # /v1, /v2, to be appended to URL
-        if not self._api_version.startswith("/"):
-            self._api_version = "/" + self._api_version
+        Args:
+            host (str): Host name or IP address
+            port (int): TCP port number for API
+            api (str): API root path, starts with /.
+            api_version (str): API version string, starts with /, appended to api string to form full path to API.
+
+        Returns:
+            bool: True if some network parameter has changed
+        """
+        ret = False
+
+        if self.host != host:
+            self.host = host
+            ret = True
+
+        if self.port != port:
+            self.port = port
+            ret = True
+
+        if not api.startswith("/"):
+            api = "/" + api
+        if self._api_root_path != api:
+            self._api_root_path = api
+            ret = True
+
+        if api_version.startswith("/"):  # v1, v2, etc. without /.
+            api_version = api_version[1:]
+        if self.version != api_version:
+            self.version = api_version
+            self._api_version = "/" + api_version  # /v1, /v2, to be appended to URL
+            ret = True
+
+        return ret
 
     def _url(self, protocol: str) -> str:
         """URL builder for the API
@@ -229,18 +265,40 @@ class API(ABC):
         """URL for the REST API"""
         return self._url("http")
 
-    def dataref(self, path, auto_save: bool = False) -> Dataref:
-        """Create Dataref with current API"""
+    def dataref(self, path: str, auto_save: bool = False) -> Dataref:
+        """Create Dataref with current API
+
+        Args:
+            path (str): Dataref "path"
+            auto_save (bool): Save dataref back to X-Plane if value has changed and writable (default: `False`)
+
+        Returns:
+            Dataref: Created dataref
+        """
         return Dataref(path=path, api=self, auto_save=auto_save)
 
-    def command(self, path) -> Command:
-        """Create Command with current API"""
+    def command(self, path: str) -> Command:
+        """Create Command with current API
+
+        Args:
+            path (str): Command "path"
+
+        Returns:
+            Command: Created command
+        """
         return Command(path=path, api=self)
 
-    def get_rest_meta(self, obj: Dataref | Command, force: bool = False) -> APIObjMeta | None:
-        """Get meta date for object
+    def get_rest_meta(self, obj: Dataref | Command, force: bool = False) -> DatarefMeta | CommandMeta | None:
+        """Get meta data from X-Plane through REST API for object.
 
         Fetches meta data and cache it unless force = True.
+
+        Args:
+            obj (Dataref| Command): Objet (Dataref or Command) to get the meta data for
+            force (bool): Force new fetch, do not read from cache (default: `False`)
+
+        Returns:
+            DatarefMeta| CommandMeta: Meta data for object.
         """
         if not self.connected:
             logger.warning("not connected")
@@ -249,7 +307,7 @@ class API(ABC):
             return obj._cached_meta
         obj._cached_meta = None
         payload = f"filter[name]={obj.path}"
-        obj_type = "/datarefs" if type(obj) is Dataref else "/commands"
+        obj_type = "/datarefs" if isinstance(obj, Dataref) else "/commands"
         url = self.rest_url + obj_type
         response = requests.get(url, params=payload)
         webapi_logger.info(f"GET {obj.path}: {url} = {response}")
@@ -265,17 +323,51 @@ class API(ABC):
 
     @abstractmethod
     def write_dataref(self, dataref: Dataref) -> bool:
+        """Write Dataref value to X-Plane if Dataref is writable
+
+        Args:
+            dataref (Dataref): Dataref to write
+
+        Returns:
+            bool: Whether write operation was successful or not
+        """
         return False
 
     @abstractmethod
     def dataref_value(self, dataref: Dataref) -> DatarefValueType:
+        """Returns Dataref value from simulator
+
+        Args:
+            dataref (Dataref): Dataref to get the value from
+
+        Returns:
+            bool | str | int | float: Value of dataref
+        """
         return False
 
     @abstractmethod
     def execute(self, command: Command, duration: float = 0.0) -> bool | int:
+        """Execute command
+
+        Args:
+            command (Command): Command to execute
+            duration (float): Duration of execution for long commands (default: `0.0`)
+
+        Returns:
+            bool: [description]
+        """
         return False
 
-    def beacon_callback(self, connected: bool):
+    def beacon_callback(self, connected: bool, beacon_data: "BeaconData", same_host: bool):
+        """Minimal beacon callback function.
+
+        Provided for convenience.
+
+        Args:
+            connected (bool): Whether beacon is received
+            beacon_data (BeaconData): Beacon data
+            same_host (bool): Whether beacon is issued from same host as host running the monitor
+        """
         self.status = CONNECTION_STATUS.RECEIVING_BEACON if connected else CONNECTION_STATUS.NO_BEACON
 
 

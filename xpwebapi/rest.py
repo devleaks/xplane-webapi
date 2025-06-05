@@ -28,6 +28,9 @@ class XPRestAPI(API):
 
     Adds cache for datarefs and commands meta data.
 
+    There is no permanent connection to REST API. When needed, connection can be probed
+    with XPRestAPI.connected which is True if API is reachable. Most API call test for reachability before issuing their request(s).
+
     See Also:
         [X-Plane Web API — REST API](https://developer.x-plane.com/article/x-plane-web-api/#REST_API)
     """
@@ -79,6 +82,37 @@ class XPRestAPI(API):
          - X-Plane version before 12.1.4,
          - X-Plane is not running
         """
+        # CHECK_API_URL = f"http://{self.host}:{self.port}/api/v1/datarefs/count"
+        # response = None
+        # if self._first_try:
+        #     logger.info(f"trying to connect to {CHECK_API_URL}..")
+        #     self._first_try = False
+        # try:
+        #     # Relies on the fact that first version is always provided.
+        #     # Later verion offer alternative ot detect API
+        #     response = requests.get(CHECK_API_URL)
+        #     webapi_logger.info(f"GET {CHECK_API_URL}: {response}")
+        #     if response.status_code == 200:
+        #         self.status = CONNECTION_STATUS.REST_API_REACHABLE
+        #         return True
+        # except requests.exceptions.ConnectionError:
+        #     if self._warning_count % 20 == 0:
+        #         logger.warning("api unreachable, may be X-Plane is not running")
+        #         self.status = CONNECTION_STATUS.REST_API_NOT_REACHABLE
+        #         self._warning_count = self._warning_count + 1
+        # except:
+        #     logger.error("api unreachable, may be X-Plane is not running", exc_info=True)
+        # return False
+        return self.rest_api_reachable
+
+    @property
+    def rest_api_reachable(self) -> bool:
+        """Whether API is reachable
+
+        API may not be reachable if:
+         - X-Plane version before 12.1.4,
+         - X-Plane is not running
+        """
         CHECK_API_URL = f"http://{self.host}:{self.port}/api/v1/datarefs/count"
         response = None
         if self._first_try:
@@ -100,6 +134,18 @@ class XPRestAPI(API):
         except:
             logger.error("api unreachable, may be X-Plane is not running", exc_info=True)
         return False
+
+    @property
+    def has_data(self) -> bool:
+        res = ""
+        d = self.all_datarefs is not None and self.all_datarefs.has_data
+        if d:
+            res = res + f"loaded {self.all_datarefs.count} dataref meta"
+        c = self.all_commands is not None and self.all_commands.has_data
+        if d:
+            res = res + f", loaded {self.all_commands.count} commands meta"
+        logger.debug(res)
+        return d and c
 
     @property
     def capabilities(self) -> dict:
@@ -444,7 +490,7 @@ class XPRestAPI(API):
             elif xp_version < XP_SUPER_MIN_VERSION:
                 new_apiversion = ""
                 logger.warning(f"could not set API version from {xp_version} ({beacon_data})")
-            if new_apiversion != "":
+            if new_apiversion != "" and (new_apiversion != self._api_version or new_host != self.host or new_port != self.port):
                 self.set_network(host=new_host, port=new_port, api="/api", api_version=new_apiversion)
                 logger.info(f"XPlane API at {self.rest_url} from UDP beacon data{use_rest}")
         else:
