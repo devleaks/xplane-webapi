@@ -2,11 +2,12 @@ import logging
 import base64
 from datetime import timedelta
 from typing import List
+from enum import Enum
 
 import requests
 from natsort import natsorted
 
-from .api import CONNECTION_STATUS, REST_KW, DATAREF_DATATYPE, API, Dataref, DatarefMeta, Command, CommandMeta, Cache, webapi_logger, DatarefValueType
+from .api import CONNECTION_STATUS, DATAREF_DATATYPE, API, Dataref, DatarefMeta, Command, CommandMeta, Cache, webapi_logger, DatarefValueType
 
 # local logging
 logger = logging.getLogger(__name__)
@@ -18,6 +19,29 @@ FLYING_TIME = "sim/time/total_flight_time_sec"  # Total time since the flight go
 
 # /api/capabilities introduced in /api/v2. Here is a default one for v1.
 V1_CAPABILITIES = {"api": {"versions": ["v1"]}, "x-plane": {"version": "12.1.1"}}
+
+
+# REST KEYWORDS
+class REST_KW(Enum):
+    """REST requests and response JSON keywords."""
+
+    COMMANDS = "commands"
+    DATA = "data"
+    DATAREFS = "datarefs"
+    DESCRIPTION = "description"
+    DURATION = "duration"
+    IDENT = "id"
+    INDEX = "index"
+    ISACTIVE = "is_active"
+    ISWRITABLE = "is_writable"
+    NAME = "name"
+    PARAMS = "params"
+    REQID = "req_id"
+    RESULT = "result"
+    SUCCESS = "success"
+    TYPE = "type"
+    VALUE = "value"
+    VALUE_TYPE = "value_type"
 
 
 # #############################################
@@ -51,6 +75,13 @@ class XPRestAPI(API):
         self._last_updated = 0
         self._warning_count = 0
         self._dataref_by_id = {}  # {dataref-id: Dataref}
+
+        self.session = requests.Session()
+        # Install session here:
+        # examples:
+        # self.session.auth = ('user', 'password')
+        self.session.headers["Accept"] = "application/json"
+        self.session.headers["Content-Type"] = "application/json"
 
     @property
     def use_cache(self) -> bool:
@@ -90,7 +121,7 @@ class XPRestAPI(API):
         # try:
         #     # Relies on the fact that first version is always provided.
         #     # Later verion offer alternative ot detect API
-        #     response = requests.get(CHECK_API_URL)
+        #     response = self.session.get(CHECK_API_URL)
         #     webapi_logger.info(f"GET {CHECK_API_URL}: {response}")
         #     if response.status_code == 200:
         #         self.status = CONNECTION_STATUS.REST_API_REACHABLE
@@ -121,7 +152,7 @@ class XPRestAPI(API):
         try:
             # Relies on the fact that first version is always provided.
             # Later verion offer alternative ot detect API
-            response = requests.get(CHECK_API_URL)
+            response = self.session.get(CHECK_API_URL)
             webapi_logger.info(f"GET {CHECK_API_URL}: {response}")
             if response.status_code == 200:
                 self.status = CONNECTION_STATUS.REST_API_REACHABLE
@@ -155,7 +186,7 @@ class XPRestAPI(API):
         if self.connected:
             try:
                 CAPABILITIES_API_URL = f"http://{self.host}:{self.port}/api/capabilities"  # independent from version
-                response = requests.get(CAPABILITIES_API_URL)
+                response = self.session.get(CAPABILITIES_API_URL)
                 webapi_logger.info(f"GET {CAPABILITIES_API_URL}: {response}")
                 if response.status_code == 200:  # We have version 12.1.4 or above
                     self._capabilities = response.json()
@@ -163,7 +194,7 @@ class XPRestAPI(API):
                     return self._capabilities
                 logger.info(f"capabilities at {self.rest_url + '/capabilities'}: response={response.status_code}")
                 url = self.rest_url + "/v1/datarefs/count"
-                response = requests.get(url)
+                response = self.session.get(url)
                 webapi_logger.info(f"GET {url}: {response}")
                 if response.status_code == 200:  # OK, /api/v1 exists, we use it, we have version 12.1.1 or above
                     self._capabilities = V1_CAPABILITIES
@@ -265,6 +296,12 @@ class XPRestAPI(API):
             f"dataref cache ({self.all_datarefs.count}) and command cache ({self.all_commands.count}) reloaded, sim uptime {str(timedelta(seconds=int(self.uptime)))}"
         )
 
+    def invalidate_caches(self):
+        """Remove cache data"""
+        self.all_datarefs = None
+        self.all_commands = None
+        logger.info("cache invalidated")
+
     def rebuild_dataref_ids(self):
         """Rebuild dataref idenfier index"""
         if self.all_datarefs.has_data and len(self._dataref_by_id) > 0:
@@ -272,6 +309,39 @@ class XPRestAPI(API):
             logger.info("dataref ids rebuilt")
             return
         logger.warning("no data to rebuild dataref ids")
+
+    def get_rest_meta(self, obj: Dataref | Command, force: bool = False) -> DatarefMeta | CommandMeta | None:
+        """Get meta data from X-Plane through REST API for object.
+
+        Fetches meta data and cache it unless force = True.
+
+        Args:
+            obj (Dataref| Command): Objet (Dataref or Command) to get the meta data for
+            force (bool): Force new fetch, do not read from cache (default: `False`)
+
+        Returns:
+            DatarefMeta| CommandMeta: Meta data for object.
+        """
+        if not self.connected:
+            logger.warning("not connected")
+            return None
+        if not force and obj._cached_meta is not None:
+            return obj._cached_meta
+        obj._cached_meta = None
+        payload = f"filter[name]={obj.path}"
+        obj_type = "/datarefs" if isinstance(obj, Dataref) else "/commands"
+        url = self.rest_url + obj_type
+        response = self.session.get(url, params=payload)
+        webapi_logger.info(f"GET {obj.path}: {url} = {response}")
+        if response.status_code == 200:
+            respjson = response.json()
+            metadata = respjson[REST_KW.DATA.value]
+            if len(metadata) > 0:
+                m0 = metadata[0]
+                obj._cached_meta = Cache.meta(**m0)
+                return obj._cached_meta
+        logger.error(f"{obj_type} {obj.path} could not get meta data through REST API")
+        return None
 
     def get_dataref_meta_by_name(self, path: str) -> DatarefMeta | None:
         """Get dataref meta data by dataref name"""
@@ -298,7 +368,7 @@ class XPRestAPI(API):
         """
         if not self.connected:
             logger.warning("not connected")
-            return None
+            return False
         if not dataref.valid:
             logger.error(f"dataref {dataref.path} not valid")
             return False
@@ -306,17 +376,19 @@ class XPRestAPI(API):
             logger.warning(f"dataref {dataref.path} is not writable")
             return False
         value = dataref._new_value
-        if value is None:
-            if dataref.value_type == DATAREF_DATATYPE.DATA.value:
-                value = ""
-            elif dataref.value_type == DATAREF_DATATYPE.INTEGER.value:
-                value = 0
-            elif dataref.value_type in [DATAREF_DATATYPE.FLOAT.value, DATAREF_DATATYPE.DOUBLE.value]:
-                value = 0.0
-            elif dataref.is_array:
-                logger.error("no value for array")
-                return False
-            logger.debug(f"no new value to write, using default {value}")
+        if value is None:  # set a default value for it
+            logger.warning(f"dataref {dataref.path} has no new value")
+            return False
+            # if dataref.value_type == DATAREF_DATATYPE.DATA.value:
+            #     value = ""
+            # elif dataref.value_type == DATAREF_DATATYPE.INTEGER.value:
+            #     value = 0
+            # elif dataref.value_type in [DATAREF_DATATYPE.FLOAT.value, DATAREF_DATATYPE.DOUBLE.value]:
+            #     value = 0.0
+            # elif dataref.is_array:
+            #     logger.error("no value for array")
+            #     return False
+            # logger.debug(f"no new value to write, using default {value}")
         if dataref.value_type == DATAREF_DATATYPE.DATA.value:  # Encode string
             value = str(value).encode("ascii")
             value = base64.b64encode(value).decode("ascii")
@@ -326,7 +398,7 @@ class XPRestAPI(API):
             # Update just one element of the array
             url = url + f"?index={dataref.index}"
         webapi_logger.info(f"PATCH {dataref.path}: {url}, {payload}")
-        response = requests.patch(url, json=payload)
+        response = self.session.patch(url, json=payload)
         if response.status_code == 200:
             data = response.json()
             logger.debug(f"result: {data}")
@@ -352,7 +424,7 @@ class XPRestAPI(API):
             duration = command.duration
         payload = {REST_KW.IDENT.value: command.ident, REST_KW.DURATION.value: duration}
         url = f"{self.rest_url}/command/{command.ident}/activate"
-        response = requests.post(url, json=payload)
+        response = self.session.post(url, json=payload)
         webapi_logger.info(f"POST {command.path}: {url} {payload} {response}")
         data = response.json()
         if response.status_code == 200:
@@ -374,7 +446,7 @@ class XPRestAPI(API):
             logger.error(f"dataref {dataref.path} not valid")
             return False
         url = f"{self.rest_url}/datarefs/{dataref.ident}/value"
-        response = requests.get(url)
+        response = self.session.get(url)
         if response.status_code == 200:
             respjson = response.json()
             webapi_logger.info(f"GET {dataref.path}: {url} = {respjson}")
@@ -393,7 +465,7 @@ class XPRestAPI(API):
         url = f"{self.rest_url}/datarefs/filter[name]={dataref.path}"
         if fields != "all":
             url = url + f"&fields=[{','.join(fields)}]"
-        response = requests.get(url)
+        response = self.session.get(url)
         if response.status_code == 200:
             respjson = response.json()
             webapi_logger.info(f"GET {dataref.path}: {url} = {respjson}")
@@ -423,7 +495,7 @@ class XPRestAPI(API):
         if limit is not None:
             payload = payload + f"&limit={limit}"
         url = f"{self.rest_url}/datarefs"
-        response = requests.get(url, params=payload)
+        response = self.session.get(url, params=payload)
         if response.status_code == 200:
             respjson = response.json()
             webapi_logger.info(f"GET {payload}: {url} = {respjson}")
@@ -451,7 +523,7 @@ class XPRestAPI(API):
         if limit is not None:
             payload = payload + f"&limit={limit}"
         url = f"{self.rest_url}/commands"
-        response = requests.get(url, params=payload)
+        response = self.session.get(url, params=payload)
         if response.status_code == 200:
             respjson = response.json()
             webapi_logger.info(f"GET {payload}: {url} = {respjson}")
@@ -467,7 +539,7 @@ class XPRestAPI(API):
         return []
 
     def set_connection_from_beacon_data(self, beacon_data: "BeaconData", same_host: bool):
-        DEFAULT_TCP_PORT = 8086
+        API_TPC_PORT = 8086
         REMOTE_TCP_PORT = 8080  # when adressing remote host, this is the port number of the **proxy** to X-Plane standard :8086 port
 
         XP_MIN_VERSION = 121400
@@ -477,7 +549,7 @@ class XPRestAPI(API):
 
         self.use_rest = self.use_rest and not same_host
         new_host = "127.0.0.1"
-        new_port = DEFAULT_TCP_PORT
+        new_port = API_TPC_PORT
         if not same_host:
             new_host = beacon_data.host
             new_port = REMOTE_TCP_PORT

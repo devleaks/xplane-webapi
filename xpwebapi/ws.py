@@ -7,24 +7,34 @@ import json
 import time
 
 from datetime import datetime
-from typing import Tuple, List, Dict
+from typing import Tuple, Dict
+from enum import Enum
 
 # Packaging is used in Cockpit to check driver versions
 from packaging.version import Version
 
 from simple_websocket import Client, ConnectionClosed
 
-from .api import CONNECTION_STATUS, webapi_logger, REST_KW, REST_RESPONSE, Dataref, Command
-from .rest import XPRestAPI
+from .api import CONNECTION_STATUS, webapi_logger, Dataref, Command
+from .rest import REST_KW, XPRestAPI
 
 # local logging
 logger = logging.getLogger(__name__)
-# logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.DEBUG)
 
 XP_MIN_VERSION = 121400
 XP_MIN_VERSION_STR = "12.1.4"
 XP_MAX_VERSION = 121499
 XP_MAX_VERSION_STR = "12.1.4"
+
+
+# WEB API RETURN CODES
+class WS_RESPONSE_TYPE(Enum):
+    """X-Plane Websocket API response types"""
+
+    RESULT = "result"
+    DATAREF_UPDATE = "dataref_update_values"
+    COMMAND_ACTIVE = "command_update_is_active"
 
 
 # #############################################
@@ -48,6 +58,7 @@ class XPWebsocketAPI(XPRestAPI):
     MAX_WARNING = 5  # number of times it reports it cannot connect
     RECONNECT_TIMEOUT = 10  # seconds, times between attempts to reconnect to X-Plane when not connected
     RECEIVE_TIMEOUT = 5  # seconds, assumes no awser if no message recevied withing that timeout
+    BEACON_TIMEOUT = 60  # seconds, if no beacon for 60 seconds, stops to release resources
 
     def __init__(self, host: str = "127.0.0.1", port: int = 8086, api: str = "api", api_version: str = "v2", use_rest: bool = False):
         # Open a UDP Socket to receive on Port 49000
@@ -58,7 +69,7 @@ class XPWebsocketAPI(XPRestAPI):
         hostname = socket.gethostname()
         self.local_ip = socket.gethostbyname(hostname)
 
-        self.ws = None  # None = no connection
+        self.ws: Client | None = None  # None = no connection
         self.ws_lsnr_not_running = threading.Event()
         self.ws_lsnr_not_running.set()  # means it is off
         self.ws_thread = None
@@ -66,6 +77,7 @@ class XPWebsocketAPI(XPRestAPI):
         self.req_number = 0
         self._requests = {}
 
+        self.slow_stop = threading.Event()
         self.should_not_connect = threading.Event()
         self.should_not_connect.set()  # starts off
         self.connect_thread = None  # threading.Thread()
@@ -96,6 +108,37 @@ class XPWebsocketAPI(XPRestAPI):
         """
         self.req_number = self.req_number + 1
         return self.req_number
+
+    # ################################
+    # Connection to web socket
+    #
+    def beacon_callback(self, connected: bool, beacon_data: "BeaconData", same_host: bool):
+        """Callback waits a little bit before shutting down websocket handler on beacon miss.
+           Starts or make sure it is running on beacon hit.
+
+        Args:
+            connected (bool): Whether beacon is received
+            beacon_data (BeaconData): Beacon data
+            same_host (bool): Whether beacon is issued from same host as host running the monitor
+        """
+        if connected:
+            logger.debug("beacon detected")
+            self.set_connection_from_beacon_data(beacon_data=beacon_data, same_host=same_host)
+            self.slow_stop.set()
+            if not self.websocket_listener_running:
+                logger.debug("starting..")
+                self.start()
+                logger.debug("..started")
+        else:
+            logger.debug(f"beacon not detected, will stop in {self.BEACON_TIMEOUT} secs.")
+            self.slow_stop.clear()
+            if not self.slow_stop.wait(self.BEACON_TIMEOUT):  # time out
+                logger.debug("stopping..")
+                self.stop()
+                self.invalidate_caches()
+                logger.debug("..stopped")
+            else:
+                logger.debug("stop aborted")
 
     # ################################
     # Connection to web socket
@@ -165,8 +208,12 @@ class XPWebsocketAPI(XPRestAPI):
         logger.debug("starting connection monitor..")
         MAX_TIMEOUT_COUNT = 5
         WARN_FREQ = 10
+        CONN_FREQ = 10
+        NOCONN_FREQ = 30
         number_of_timeouts = 0
         to_count = 0
+        mon_count = 0
+        noconn_count = 0
         noconn = 0
         while not self.should_not_connect.is_set():
             if not self.connected:
@@ -180,16 +227,18 @@ class XPWebsocketAPI(XPRestAPI):
                         number_of_timeouts = 0
                         self.dynamic_timeout = self.RECONNECT_TIMEOUT
                         logger.info(f"capabilities: {self.capabilities}")
-                        if self.xp_version is not None:
-                            curr = Version(self.xp_version)
-                            xpmin = Version(XP_MIN_VERSION_STR)
-                            xpmax = Version(XP_MAX_VERSION_STR)
+                        if self.xp_version is not None:  # see https://packaging.pypa.io/en/stable/version.html
+                            curr = Version(self.xp_version).base_version  # note Version() uniformly converts "12.2.0-r1" to "12.2.0.post1"
+                            xpmin = Version(XP_MIN_VERSION_STR).base_version
+                            xpmax = Version(XP_MAX_VERSION_STR).base_version
                             if curr < xpmin:
-                                logger.warning(f"X-Plane version {curr} detected, minimal version is {xpmin}")
+                                logger.warning(f"X-Plane version {curr} ({self.xp_version}) detected, minimal version is {xpmin}")
                                 logger.warning("Some features in Cockpitdecks may not work properly")
                             elif curr > xpmax:
-                                logger.warning(f"X-Plane version {curr} detected, maximal version is {xpmax}")
-                                logger.warning("Some features in Cockpitdecks may not work properly")
+                                logger.warning(f"X-Plane version {curr} ({self.xp_version}) detected, maximal version is {xpmax}")
+                                logger.warning(
+                                    f"Some features in Cockpitdecks may not work properly (Cockpitdecks not tested against X-Plane version after {xpmax})"
+                                )
                             else:
                                 logger.info(f"X-Plane version requirements {xpmin}<= {curr} <={xpmax} satisfied")
                         logger.debug("..connected, starting websocket listener..")
@@ -214,11 +263,15 @@ class XPWebsocketAPI(XPRestAPI):
                 if not self.connected:
                     self.dynamic_timeout = 1
                     self.should_not_connect.wait(self.dynamic_timeout)
-                    logger.debug("..no connection. trying to connect..")
+                    if noconn_count % NOCONN_FREQ == 0:
+                        logger.debug("..no connection. trying to connect..")
+                    noconn_count = noconn_count + 1
             else:
                 # Connection is OK, we wait before checking again
                 self.should_not_connect.wait(self.RECONNECT_TIMEOUT)  # could be n * RECONNECT_TIMEOUT
-                logger.debug("..monitoring connection..")
+                if mon_count % CONN_FREQ == 0:
+                    logger.debug("..monitoring connection..")
+                mon_count = mon_count + 1
         logger.debug("..ended connection monitor")
 
     # ################################
@@ -334,6 +387,9 @@ class XPWebsocketAPI(XPRestAPI):
         for dataref in datarefs.values():
             if type(dataref) is list:
                 meta = self.get_dataref_meta_by_id(dataref[0].ident)  # we modify the global source info, not the local copy in the Dataref()
+                if meta is None:
+                    logger.warning(f"cannot register {dataref[0]}, no meta data")
+                    continue
                 webapi_logger.info(f"INDICES bef: {dataref[0].ident} => {meta.indices}")
                 meta.save_indices()  # indices of "current" requests
                 ilist = []
@@ -505,16 +561,19 @@ class XPWebsocketAPI(XPRestAPI):
     def ws_listener(self):
         """Read and decode websocket messages and calls back"""
         logger.info("starting websocket listener..")
-        self.RECEIVE_TIMEOUT = 1  # when not connected, checks often
+
         total_reads = 0
-        attention = 40
+        attention = 10
         to_count = 0
         TO_COUNT_DEBUG = 10
         TO_COUNT_INFO = 50
         start_time = datetime.now()
         last_read_ts = start_time
         total_read_time = 0.0
+
+        self.RECEIVE_TIMEOUT = 1  # when not connected, checks often
         self.status = CONNECTION_STATUS.LISTENING_FOR_DATA
+
         while self.websocket_listener_running:
             try:
                 message = self.ws.receive(timeout=self.RECEIVE_TIMEOUT)
@@ -528,7 +587,7 @@ class XPWebsocketAPI(XPRestAPI):
 
                 now = datetime.now()
                 if total_reads == 0:
-                    logger.info(f"..first message at {now} ({round((now - start_time).seconds, 2)} secs.) {'<'*attention}")
+                    logger.info(f"..first message at {now.replace(microsecond=0)} ({round((now - start_time).seconds, 2)} secs.) {'<'*attention}")
                     self.status = CONNECTION_STATUS.RECEIVING_DATA
                     self.RECEIVE_TIMEOUT = 5  # when connected, check less often, message will arrive
 
@@ -545,7 +604,7 @@ class XPWebsocketAPI(XPRestAPI):
                     resp_type = data[REST_KW.TYPE.value]
                     #
                     #
-                    if resp_type == REST_RESPONSE.RESULT.value:
+                    if resp_type == WS_RESPONSE_TYPE.RESULT.value:
 
                         webapi_logger.info(f"<<RCV  {data}")
                         req_id = data.get(REST_KW.REQID.value)
@@ -558,7 +617,7 @@ class XPWebsocketAPI(XPRestAPI):
                                     logger.warning("issue calling on_request_feedback", exc_info=True)
                     #
                     #
-                    elif resp_type == REST_RESPONSE.COMMAND_ACTIVE.value:
+                    elif resp_type == WS_RESPONSE_TYPE.COMMAND_ACTIVE.value:
 
                         if REST_KW.DATA.value not in data:
                             logger.warning(f"no data: {data}")
@@ -577,7 +636,7 @@ class XPWebsocketAPI(XPRestAPI):
                                 logger.warning(f"no command for id={self.all_commands.equiv(ident=int(ident))}")
                     #
                     #
-                    elif resp_type == REST_RESPONSE.DATAREF_UPDATE.value:
+                    elif resp_type == WS_RESPONSE_TYPE.DATAREF_UPDATE.value:
 
                         if REST_KW.DATA.value not in data:
                             logger.warning(f"no data: {data}")
@@ -721,6 +780,7 @@ class XPWebsocketAPI(XPRestAPI):
                 if self.ws_thread.is_alive():
                     logger.warning("..thread may hang in ws.receive()..")
                 logger.info("..websocket listener stopped")
+            self.invalidate_caches()
         else:
             logger.debug("websocket listener not running")
 
@@ -897,7 +957,7 @@ class XPWebsocketAPI(XPRestAPI):
             request id if succeeded
         """
         if self.use_rest:
-            return super().write_datatef(dataref=dataref)
+            return super().write_dataref(dataref=dataref)
         return self.set_dataref_value(path=dataref.name, value=dataref._new_value)
 
     def monitor_command_active(self, command: Command) -> bool | int:

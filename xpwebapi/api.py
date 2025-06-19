@@ -8,8 +8,6 @@ from enum import Enum, IntEnum
 from datetime import datetime
 from typing import List
 
-import requests
-
 type DatarefValueType = bool | str | int | float
 
 # local logger
@@ -28,29 +26,6 @@ webapi_logger = logging.getLogger("webapi")
 #     webapi_logger.propagate = False
 
 
-# REST KEYWORDS
-class REST_KW(Enum):
-    """REST requests and response JSON keywords."""
-
-    COMMANDS = "commands"
-    DATA = "data"
-    DATAREFS = "datarefs"
-    DESCRIPTION = "description"
-    DURATION = "duration"
-    IDENT = "id"
-    INDEX = "index"
-    ISACTIVE = "is_active"
-    ISWRITABLE = "is_writable"
-    NAME = "name"
-    PARAMS = "params"
-    REQID = "req_id"
-    RESULT = "result"
-    SUCCESS = "success"
-    TYPE = "type"
-    VALUE = "value"
-    VALUE_TYPE = "value_type"
-
-
 # DATAREF VALUE TYPES
 class DATAREF_DATATYPE(Enum):
     """X-Plane API dataref types"""
@@ -61,15 +36,6 @@ class DATAREF_DATATYPE(Enum):
     INTARRAY = "int_array"
     FLOATARRAY = "float_array"
     DATA = "data"
-
-
-# WEB API RETURN CODES
-class REST_RESPONSE(Enum):
-    """X-Plane REST API response codes"""
-
-    RESULT = "result"
-    COMMAND_ACTIVE = "command_update_is_active"
-    DATAREF_UPDATE = "dataref_update_values"
 
 
 class CONNECTION_STATUS(IntEnum):
@@ -288,39 +254,6 @@ class API(ABC):
         """
         return Command(path=path, api=self)
 
-    def get_rest_meta(self, obj: Dataref | Command, force: bool = False) -> DatarefMeta | CommandMeta | None:
-        """Get meta data from X-Plane through REST API for object.
-
-        Fetches meta data and cache it unless force = True.
-
-        Args:
-            obj (Dataref| Command): Objet (Dataref or Command) to get the meta data for
-            force (bool): Force new fetch, do not read from cache (default: `False`)
-
-        Returns:
-            DatarefMeta| CommandMeta: Meta data for object.
-        """
-        if not self.connected:
-            logger.warning("not connected")
-            return None
-        if not force and obj._cached_meta is not None:
-            return obj._cached_meta
-        obj._cached_meta = None
-        payload = f"filter[name]={obj.path}"
-        obj_type = "/datarefs" if isinstance(obj, Dataref) else "/commands"
-        url = self.rest_url + obj_type
-        response = requests.get(url, params=payload)
-        webapi_logger.info(f"GET {obj.path}: {url} = {response}")
-        if response.status_code == 200:
-            respjson = response.json()
-            metadata = respjson[REST_KW.DATA.value]
-            if len(metadata) > 0:
-                m0 = metadata[0]
-                obj._cached_meta = Cache.meta(**m0)
-                return obj._cached_meta
-        logger.error(f"{obj_type} {obj.path} could not get meta data through REST API")
-        return None
-
     @abstractmethod
     def write_dataref(self, dataref: Dataref) -> bool:
         """Write Dataref value to X-Plane if Dataref is writable
@@ -392,7 +325,7 @@ class Cache:
     @classmethod
     def meta(cls, **kwargs) -> DatarefMeta | CommandMeta:
         """Create DatarefMeta or CommandMeta from dictionary of meta data returned by X-Plane Web API"""
-        return DatarefMeta(**kwargs) if REST_KW.ISWRITABLE.value in kwargs else CommandMeta(**kwargs)
+        return DatarefMeta(**kwargs) if "is_writable" in kwargs else CommandMeta(**kwargs)  # definitely not a good differentiator
 
     def load(self, path):
         """Load cache data"""
@@ -401,13 +334,13 @@ class Cache:
             return None
         self._what = path
         url = self.api.rest_url + path
-        response = requests.get(url)
+        response = self.api.session.get(url)
         webapi_logger.info(f"GET {path}: {url} = {response}")
         if response.status_code != 200:  # We have version 12.1.4 or above
             logger.error(f"load: response={response.status_code}")
             return
         raw = response.json()
-        data = raw[REST_KW.DATA.value]
+        data = raw["data"]
         self._raw = data
 
         metas = [Cache.meta(**c) for c in data]

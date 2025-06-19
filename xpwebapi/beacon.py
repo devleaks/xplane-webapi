@@ -16,7 +16,7 @@ import socket
 import struct
 import binascii
 import platform
-from typing import Callable, List
+from typing import Callable, List, Set
 from enum import Enum, IntEnum
 from datetime import datetime
 from dataclasses import dataclass
@@ -56,10 +56,10 @@ class BeaconData:
     """Pythonic dataclass to host X-Plane Beacon data."""
 
     host: str
-    port: int
+    port: int  # this is the UDP port, not the TCP API port
     hostname: str
     xplane_version: int
-    role: int
+    role: int  # 1 for master, 2 for extern visual, 3 for IOS
 
 
 class BEACON_DATA(Enum):
@@ -84,6 +84,9 @@ class BEACON_MONITOR_STATUS(IntEnum):
     NOT_RUNNING = 0  # Beacon not running
     RUNNING = 1  # Beacon running but no beacon detected
     DETECTING_BEACON = 2  # Beacon running and beacon detected
+
+
+API_XPLANE_VERSION_NAMES = {121010: "12.1.1", 121400: "12.1.4", 122015: "12.2.0-r1"}  # limited to released versions only, add beta if necessary
 
 
 BEACON_TIMEOUT = 3.0  # seconds, time the socket will wait for beacon, beacon is broadcast every second or less, unless X-Plane is busy busy
@@ -141,6 +144,8 @@ class XPBeaconMonitor:
     MAX_WARNING = 3  # after MAX_WARNING warnings of "no connection", stops reporting "no connection"
     WARN_FREQ = 10  # attempts: Every so often, report warning to show beacon monitor is alive, receiving beacon or not
 
+    ROLES = ["none", "master", "extern visual", "IOS"]
+
     def __init__(self):
         # Open a UDP Socket to receive on Port 49000
         self.socket = None
@@ -152,7 +157,7 @@ class XPBeaconMonitor:
         self._connect_thread: threading.Thread | None = None
 
         self._already_warned = 0
-        self._callback: Callable | None = None
+        self._callback: Set[Callable] = set()
         self.my_ips = list_my_ips()
         self._status = BEACON_MONITOR_STATUS.RUNNING  # init != first value
         self.status = BEACON_MONITOR_STATUS.NOT_RUNNING  # first value set through api
@@ -185,20 +190,21 @@ class XPBeaconMonitor:
     # Internal functions
     #
     def callback(self, connected: bool, beacon_data: BeaconData, same_host: bool):
-        """Execute callback function if supplied
+        """Execute all callback functions
 
         Callback function prototype
         ```python
-        callback(connected: bool)
+        callback(connected: bool, beacon_data: BeaconData | None, same_host: bool | None)
         ```
 
         Connected is True is beacon is detected at regular interval, False otherwise
         """
-        if self._callback is not None:
-            try:
-                self._callback(connected=connected, beacon_data=beacon_data, same_host=same_host)
-            except:
-                logger.warning("issue calling beacon callback", exc_info=True)
+        if len(self._callback) > 0:
+            for c in self._callback:
+                try:
+                    c(connected=connected, beacon_data=beacon_data, same_host=same_host)
+                except:
+                    logger.warning(f"issue calling beacon callback {c}", exc_info=True)
 
     def get_beacon(self, timeout: float = BEACON_TIMEOUT) -> BeaconData | None:
         """Attemps to capture X-Plane beacon. Returns first occurence of beacon data encountered
@@ -262,15 +268,17 @@ class XPBeaconMonitor:
                 self._latest_timeout = 0
                 # * Data
                 data = packet[5:21]
+                # X-Plane documentation says:
                 # struct becn_struct
                 # {
-                #   uchar beacon_major_version;     // 1 at the time of X-Plane 10.40
-                #   uchar beacon_minor_version;     // 1 at the time of X-Plane 10.40
-                #   xint application_host_id;       // 1 for X-Plane, 2 for PlaneMaker
-                #   xint version_number;            // 104014 for X-Plane 10.40b14
-                #   uint role;                      // 1 for master, 2 for extern visual, 3 for IOS
-                #   ushort port;                    // port number X-Plane is listening on
-                #   xchr    computer_name[strDIM];  // the hostname of the computer
+                #    uchar beacon_major_version;    // 1 at the time of X-Plane 10.40, 11.55
+                #    uchar beacon_minor_version;    // 1 at the time of X-Plane 10.40, 2 for 11.55
+                #    xint application_host_id;      // 1 for X-Plane, 2 for PlaneMaker
+                #    xint version_number;           // 104014 is X-Plane 10.40b14, 115501 is 11.55r2
+                #    uint role;                     // 1 for master, 2 for extern visual, 3 for IOS
+                #    ushort port;                   // port number X-Plane is listening on
+                #    xchr    computer_name[500];    // the hostname of the computer
+                #    ushort  raknet_port;           // port number the X-Plane Raknet clinet is listening on
                 # };
                 beacon_major_version = 0
                 beacon_minor_version = 0
@@ -288,9 +296,10 @@ class XPBeaconMonitor:
                 ) = struct.unpack("<BBiiIH", data)
                 hostname = packet[21:-1]  # the hostname of the computer
                 hostname = hostname[0 : hostname.find(0)]
+                # raknet_port = data[-1]
                 if beacon_major_version == 1 and beacon_minor_version <= 2 and application_host_id == 1:
                     self.data = BeaconData(host=sender[0], port=port, hostname=hostname.decode(), xplane_version=xplane_version_number, role=role)
-                    logger.info(f"XPlane Beacon Version: {beacon_major_version}.{beacon_minor_version}.{application_host_id}")
+                    logger.info(f"XPlane Beacon Version: {beacon_major_version}.{beacon_minor_version}.{application_host_id} (role: {self.ROLES[role]})")
                 else:
                     logger.warning(f"XPlane Beacon Version not supported: {beacon_major_version}.{beacon_minor_version}.{application_host_id}")
                     raise XPlaneVersionNotSupported()
@@ -379,9 +388,9 @@ class XPBeaconMonitor:
         return False
 
     def set_callback(self, callback: Callable | None = None):
-        """Set callback function
+        """Add callback function
 
-        Callback function will be called whenever the status of the "connection" changes.
+        Callback functions will be called whenever the status of the "connection" changes.
 
         Args:
             callback (Callable): Callback function
@@ -392,7 +401,7 @@ class XPBeaconMonitor:
 
         Connected is True is beacon is detected at regular interval, False otherwise
         """
-        self._callback = callback
+        self._callback.add(callback)
 
     def start_monitor(self):
         """Starts beacon monitor"""
