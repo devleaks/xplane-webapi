@@ -30,7 +30,7 @@ dependencies = [
     "packaging~=25.0",
     "requests~=2.32",
     "simple-websocket~=1.1",
-    "natsort~=£8.4"
+    "natsort~=8.4"
 ]
 
 dynamic = [
