@@ -113,16 +113,13 @@ class XPWebsocketAPI(XPRestAPI):
         self.req_number = self.req_number + 1
         return self.req_number
 
-    def set_callback(self, cbtype: str, callback: Callable):
+    def set_callback(self, cbtype: CALLBACK_TYPE, callback: Callable):
         """Add callback function to set of callback functions
 
         Args:
             callback (Callable): Callback function
         """
-        if cbtype not in self.callbacks.keys():
-            logger.warning(f"invalid callback type {cbtype}")
-            return
-        self.callbacks[cbtype].add(callback)
+        self.callbacks[cbtype.value].add(callback)
 
     def execute_callbacks(self, cbtype: CALLBACK_TYPE, **kwargs) -> bool:
         """Execute list of callback functions, all with same arguments passed as keyword arguments
