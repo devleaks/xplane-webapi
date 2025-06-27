@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # special logger for all REST or Websocket traffic
 WEBAPILOGFILE = "webapi.log"
 webapi_logger = logging.getLogger("webapi")
-# webapi_logger.setLevel(logging.DEBUG)
+webapi_logger.setLevel(logging.WARNING)
 # if WEBAPILOGFILE is not None:
 #     formatter = logging.Formatter('"%(asctime)s" %(message)s')
 #     handler = logging.FileHandler(WEBAPILOGFILE, mode="w")
@@ -41,6 +41,7 @@ class DATAREF_DATATYPE(Enum):
 class CONNECTION_STATUS(IntEnum):
     """Internal Beacon Connector status"""
 
+    NOT_CONNECTED = 7  # i.e. not receiving beacon
     NO_BEACON = 0  # i.e. not receiving beacon
     RECEIVING_BEACON = 1
     REST_API_REACHABLE = 2
@@ -51,8 +52,14 @@ class CONNECTION_STATUS(IntEnum):
     RECEIVING_DATA = 5
 
 
+class XPLANE_API_VERSIONS(Enum):
+    """API version number (string) versus X-Plane release number of that version"""
+    v1 = "12.1.1"
+    v2 = "12.1.4"
+
+
 # #############################################
-# CORE ENTITIES
+# CORE ENTITIES - META DATA
 #
 class APIObjMeta(ABC):
     """Container for XP Web API models meta data"""
@@ -141,8 +148,10 @@ class API(ABC):
         self._api_root_path = None
         self._api_version = None
         self._use_rest = True  # only option on startup
-        self._status = None
-        self.status = CONNECTION_STATUS.NO_BEACON
+        self._status = CONNECTION_STATUS.NO_BEACON  # wrong initial value to force update on next instruction and provoque logger.warning
+        self.status = CONNECTION_STATUS.NOT_CONNECTED
+
+        self._use_cache = False  # actual use of cache
 
         self.set_network(host=host, port=port, api=api, api_version=api_version)
 
@@ -385,6 +394,9 @@ class Cache:
         return f"no equivalence for {ident}"
 
 
+# #############################################
+# CORE ENTITIES
+#
 class Dataref:
     """X-Plane Web API Dataref"""
 

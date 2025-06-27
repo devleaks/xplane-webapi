@@ -20,7 +20,7 @@ from .rest import REST_KW, XPRestAPI
 
 # local logging
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+# logger.setLevel(logging.DEBUG)
 
 XP_MIN_VERSION = 121400
 XP_MIN_VERSION_STR = "12.1.4"
@@ -36,6 +36,14 @@ class WS_RESPONSE_TYPE(Enum):
     DATAREF_UPDATE = "dataref_update_values"
     COMMAND_ACTIVE = "command_update_is_active"
 
+class CALLBACK_TYPE(Enum):
+    ON_OPEN = "open"
+    ON_CLOSE = "close"
+    ON_REQUEST_FEEDBACK = "feedback"
+    ON_DATAREF_UPDATE = "dataref_update"
+    ON_COMMAND_ACTIVE = "command_active"
+    AFTER_START = "after_start"
+    BEFORE_STOP = "before_stop"
 
 # #############################################
 # WEBSOCKET API
@@ -84,16 +92,12 @@ class XPWebsocketAPI(XPRestAPI):
         self._already_warned = 0
         self._stats = {}
 
-        #
-        self.after_on_start = None  # Called after startup of monitor, protoype: `func(connected: bool)`
-        self.before_on_stop = None  # Called before stopping of monitor, protoype: `func(connected: bool)`
-        self.on_dataref_update = None  # Called on dataref update event, for each indivudual dataref, prototype: `func(dataref:str, value: int|float|str)`
-        self.on_command_active = None  # Called on command active event, for each indivudual command, prototype: `func(command:str, active: bool)`
+        self.callbacks = {t.value: set() for t in CALLBACK_TYPE}
+        # Add a default
+        self.set_callback(CALLBACK_TYPE.ON_REQUEST_FEEDBACK, self._on_request_feedback)
         self.on_request_feedback = (
             self._on_request_feedback
         )  # Called on command request feedback, for each indivudua feedback, prototype: `func(request_id:int, payload: dict)`
-        self.on_open = None  # called when websocket sucessfully opened, prototype: `func()`
-        self.on_close = None  # called when websocket closed, prototype: `func()`
 
     @property
     def ws_url(self) -> str:
@@ -108,6 +112,37 @@ class XPWebsocketAPI(XPRestAPI):
         """
         self.req_number = self.req_number + 1
         return self.req_number
+
+    def set_callback(self, cbtype: str, callback: Callable):
+        """Add callback function to set of callback functions
+
+        Args:
+            callback (Callable): Callback function
+        """
+        if cbtype not in self.callbacks.keys():
+            logger.warning(f"invalid callback type {cbtype}")
+            return
+        self.callbacks[cbtype].add(callback)
+
+    def execute_callbacks(self, cbtype: CALLBACK_TYPE, **kwargs) -> bool:
+        """Execute list of callback functions, all with same arguments passed as keyword arguments
+
+           returns
+
+           bool: Whether error reported during execution
+
+        """
+        cbs = self.callbacks[cbtype.value]
+        if len(cbs) == 0:
+            return True
+        ret = True
+        for callback in cbs:
+            try:
+                callback(**kwargs)
+            except:
+                logger.error(f"callback {callback}", exc_info=True)
+                ret = False
+        return ret
 
     # ################################
     # Connection to web socket
@@ -161,24 +196,26 @@ class XPWebsocketAPI(XPRestAPI):
 
     def connect_websocket(self):
         """Create and open Websocket connection if REST API is reachable"""
+        warn_count = 0
         if self.ws is None:
-            try:
-                if self.rest_api_reachable:
-                    url = self.ws_url
-                    if url is not None:
+            url = self.ws_url
+            if url is not None:
+                try:
+                    if self.rest_api_reachable:
                         self.ws = Client.connect(url)
                         self.status = CONNECTION_STATUS.WEBSOCKET_CONNNECTED
                         self.reload_caches()
                         logger.info(f"websocket opened at {url}")
-                        if self.on_open is not None:
-                            try:
-                                self.on_open()
-                            except:
-                                logger.error("websocket on_open", exc_info=True)
+                        self.execute_callbacks(CALLBACK_TYPE.ON_OPEN)
+                        warn_count = 0
                     else:
-                        logger.warning(f"web socket url is none {url}")
-            except:
-                logger.error("cannot connect", exc_info=True)
+                        if warn_count < 5 or warn_count % 20 == 0:
+                            logger.warning("rest api unreachable")
+                        warn_count = warn_count + 1
+                except:
+                    logger.error("cannot connect", exc_info=True)
+            else:
+                logger.warning(f"web socket url is none {url}")
         else:
             logger.warning("already connected")
 
@@ -191,11 +228,7 @@ class XPWebsocketAPI(XPRestAPI):
             dummy = super().connected  # set REST API reachability status
             if not silent:
                 logger.info("websocket closed")
-            if self.on_close is not None:
-                try:
-                    self.on_close()
-                except:
-                    logger.error("websocket on_close", exc_info=True)
+            self.execute_callbacks(CALLBACK_TYPE.ON_CLOSE)
         else:
             if not silent:
                 logger.warning("already disconnected")
@@ -233,11 +266,11 @@ class XPWebsocketAPI(XPRestAPI):
                             xpmax = Version(XP_MAX_VERSION_STR).base_version
                             if curr < xpmin:
                                 logger.warning(f"X-Plane version {curr} ({self.xp_version}) detected, minimal version is {xpmin}")
-                                logger.warning("Some features in Cockpitdecks may not work properly")
+                                logger.warning("Some features may not work properly")
                             elif curr > xpmax:
                                 logger.warning(f"X-Plane version {curr} ({self.xp_version}) detected, maximal version is {xpmax}")
                                 logger.warning(
-                                    f"Some features in Cockpitdecks may not work properly (Cockpitdecks not tested against X-Plane version after {xpmax})"
+                                    f"Some features may not work properly (not tested against X-Plane version after {xpmax})"
                                 )
                             else:
                                 logger.info(f"X-Plane version requirements {xpmin}<= {curr} <={xpmax} satisfied")
@@ -610,11 +643,7 @@ class XPWebsocketAPI(XPRestAPI):
                         req_id = data.get(REST_KW.REQID.value)
                         if req_id is not None:
                             self._requests[req_id] = data.get(REST_KW.SUCCESS.value)
-                            if self.on_request_feedback is not None:
-                                try:
-                                    self.on_request_feedback(request_id=req_id, payload=data)
-                                except:
-                                    logger.warning("issue calling on_request_feedback", exc_info=True)
+                            self.execute_callbacks(CALLBACK_TYPE.ON_REQUEST_FEEDBACK, request_id=req_id, payload=data)
                     #
                     #
                     elif resp_type == WS_RESPONSE_TYPE.COMMAND_ACTIVE.value:
@@ -627,11 +656,7 @@ class XPWebsocketAPI(XPRestAPI):
                             meta = self.get_command_meta_by_id(int(ident))
                             if meta is not None:
                                 webapi_logger.info(f"CMD : {meta.name}={value}")
-                                if self.on_command_active is not None:
-                                    try:
-                                        self.on_command_active(command=meta.name, active=value)
-                                    except:
-                                        logger.warning("issue calling on_command_active", exc_info=True)
+                                self.execute_callbacks(CALLBACK_TYPE.ON_COMMAND_ACTIVE, command=meta.name, active=value)
                             else:
                                 logger.warning(f"no command for id={self.all_commands.equiv(ident=int(ident))}")
                     #
@@ -679,12 +704,8 @@ class XPWebsocketAPI(XPRestAPI):
                                         current_indices = last_indices
                                 for idx, v1 in zip(current_indices, value):
                                     d1 = f"{meta.name}[{idx}]"
-                                    if self.on_dataref_update is not None:
-                                        try:
-                                            self.on_dataref_update(dataref=d1, value=v1)
-                                        except:
-                                            logger.warning("issue calling on_dataref_update (multi)", exc_info=True)
-                                        # print(f"{d1}={v1}")
+                                    self.execute_callbacks(CALLBACK_TYPE.ON_DATAREF_UPDATE, dataref=d1, value=v1)
+                                    # print(f"{d1}={v1}")
                                 # alternative:
                                 # for d in dataref:
                                 #     parsed_value = d.parse_raw_value(value)
@@ -693,12 +714,8 @@ class XPWebsocketAPI(XPRestAPI):
                                 #
                                 # 2. Scalar value
                                 parsed_value = dataref.parse_raw_value(value)
-                                if self.on_dataref_update is not None:
-                                    try:
-                                        self.on_dataref_update(dataref=dataref.path, value=parsed_value)
-                                    except:
-                                        logger.warning("issue calling on_dataref_update", exc_info=True)
-                                    # print(f"{dataref.name}={parsed_value}")
+                                self.execute_callbacks(CALLBACK_TYPE.ON_DATAREF_UPDATE, dataref=dataref.path, value=parsed_value)
+                                # print(f"{dataref.name}={parsed_value}")
                     #
                     #
                     else:
@@ -752,11 +769,7 @@ class XPWebsocketAPI(XPRestAPI):
         # then reload datarefs from current page of each deck
         self.reload_caches()
         self.rebuild_dataref_ids()
-        if self.after_on_start is not None:
-            try:
-                self.after_on_start(connected=self.connected)
-            except:
-                logger.warning("issue calling after_on_start", exc_info=True)
+        self.execute_callbacks(CALLBACK_TYPE.AFTER_START, connected=self.connected)
         logger.info(f"{type(self).__name__} started")
 
     def stop(self):
@@ -766,11 +779,7 @@ class XPWebsocketAPI(XPRestAPI):
             #     self.all_datarefs.save("datarefs.json")
             # if self.all_commands is not None:
             #     self.all_commands.save("commands.json")
-            if self.before_on_stop is not None:
-                try:
-                    self.before_on_stop(connected=self.connected)
-                except:
-                    logger.warning("issue calling before_on_stop", exc_info=True)
+            self.execute_callbacks(CALLBACK_TYPE.BEFORE_STOP, connected=self.connected)
             self.ws_lsnr_not_running.set()
             if self.ws_thread is not None and self.ws_thread.is_alive():
                 logger.debug("stopping websocket listener..")
