@@ -325,7 +325,7 @@ class XPBeaconMonitor:
         """
         return self._consecutive_failures
 
-    def monitor(self):
+    def _monitor(self):
         """
         Trys to connect to X-Plane indefinitely until should_not_connect Event is set.
         If a connection fails, drops, disappears, will try periodically to restore it.
@@ -407,7 +407,7 @@ class XPBeaconMonitor:
         """Starts beacon monitor"""
         if self.not_monitoring.is_set():
             self.not_monitoring.clear()  # f"{__name__}::{type(self).__name__}"
-            self._connect_thread = threading.Thread(target=self.monitor, name=f"{__name__}::monitor")
+            self._connect_thread = threading.Thread(target=self._monitor, name=f"{__name__}::monitor")
             self._connect_thread.start()
             logger.debug("monitor started")
         else:
