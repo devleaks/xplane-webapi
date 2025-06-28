@@ -5,6 +5,7 @@ import socket
 import struct
 import binascii
 from time import sleep
+from typing import Tuple, Dict
 import logging
 
 from .api import API, DatarefValueType, Dataref, Command
