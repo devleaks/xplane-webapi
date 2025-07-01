@@ -20,6 +20,10 @@ FLYING_TIME = "sim/time/total_flight_time_sec"  # Total time since the flight go
 # /api/capabilities introduced in /api/v2. Here is a default one for v1.
 V1_CAPABILITIES = {"api": {"versions": ["v1"]}, "x-plane": {"version": "12.1.1"}}
 
+# When accessing API from remote host, this is the default port number for the **proxy** to X-Plane standard :8086 port.
+# Can be changed when calling set_network_from_beacon_data()
+PROXY_TCP_PORT = 8080
+
 
 # REST KEYWORDS
 class REST_KW(Enum):
@@ -281,11 +285,14 @@ class XPRestAPI(API):
 
     def rebuild_dataref_ids(self):
         """Rebuild dataref idenfier index"""
-        if self.all_datarefs.has_data and len(self._dataref_by_id) > 0:
-            self._dataref_by_id = {d.ident: d for d in self._dataref_by_id.values()}
-            logger.info("dataref ids rebuilt")
-            return
-        logger.warning("no data to rebuild dataref ids")
+        if len(self._dataref_by_id) > 0:
+            if self.all_datarefs.has_data:
+                self._dataref_by_id = {d.ident: d for d in self._dataref_by_id.values()}
+                logger.info("dataref ids rebuilt")
+                return
+            logger.warning("no data to rebuild dataref ids")
+        else:
+            logger.debug("no dataref to rebuild ids")
 
     def get_rest_meta(self, obj: Dataref | Command, force: bool = False) -> DatarefMeta | CommandMeta | None:
         """Get meta data from X-Plane through REST API for object.
@@ -515,9 +522,8 @@ class XPRestAPI(API):
         logger.error(f"commands_meta: {response} {response.reason} {response.text}")
         return []
 
-    def set_connection_from_beacon_data(self, beacon_data: "BeaconData", same_host: bool):
-        API_TPC_PORT = 8086
-        REMOTE_TCP_PORT = 8080  # when adressing remote host, this is the port number of the **proxy** to X-Plane standard :8086 port
+    def set_connection_from_beacon_data(self, beacon_data: "BeaconData", same_host: bool, remote_tcp_port: PROXY_TCP_PORT):
+        API_TCP_PORT = 8086
 
         XP_MIN_VERSION = 121400
         XP_MIN_VERSION_STR = "12.1.4"
@@ -526,10 +532,10 @@ class XPRestAPI(API):
 
         self.use_rest = self.use_rest and not same_host
         new_host = "127.0.0.1"
-        new_port = API_TPC_PORT
+        new_port = API_TCP_PORT
         if not same_host:
             new_host = beacon_data.host
-            new_port = REMOTE_TCP_PORT
+            new_port = PROXY_TCP_PORT
         xp_version = beacon_data.xplane_version
         if xp_version is not None:
             use_rest = ", use REST" if self.use_rest else ""

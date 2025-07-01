@@ -54,6 +54,7 @@ class CONNECTION_STATUS(IntEnum):
 
 class XPLANE_API_VERSIONS(Enum):
     """API version number (string) versus X-Plane release number of that version"""
+
     v1 = "12.1.1"
     v2 = "12.1.4"
 

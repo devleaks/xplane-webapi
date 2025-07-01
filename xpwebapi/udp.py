@@ -44,7 +44,7 @@ class XPUDPAPI(API):
         # values from xplane
         self.xplaneValues = {}
         self.defaultFreq = 1
-        API.__init__(self,  host="127.0.0.1", port=49000, api="", api_version="")
+        API.__init__(self, host="127.0.0.1", port=49000, api="", api_version="")
 
     def __del__(self):
         for i in range(len(self.datarefs)):
@@ -142,7 +142,7 @@ class XPUDPAPI(API):
 
     def _request_dataref(self, dataref: str, freq: int | None = None) -> bool | int:
         """Request X-Plane to send the dataref with a certain frequency.
-           You can disable a dataref by setting freq to 0.
+        You can disable a dataref by setting freq to 0.
         """
         if not self.connected:
             logger.warning("not connected")

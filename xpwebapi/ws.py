@@ -36,6 +36,7 @@ class WS_RESPONSE_TYPE(Enum):
     DATAREF_UPDATE = "dataref_update_values"
     COMMAND_ACTIVE = "command_update_is_active"
 
+
 class CALLBACK_TYPE(Enum):
     ON_OPEN = "open"
     ON_CLOSE = "close"
@@ -44,6 +45,7 @@ class CALLBACK_TYPE(Enum):
     ON_COMMAND_ACTIVE = "command_active"
     AFTER_START = "after_start"
     BEFORE_STOP = "before_stop"
+
 
 # #############################################
 # WEBSOCKET API
@@ -113,7 +115,7 @@ class XPWebsocketAPI(XPRestAPI):
         self.req_number = self.req_number + 1
         return self.req_number
 
-    def set_callback(self, cbtype: CALLBACK_TYPE, callback: Callable):
+    def add_callback(self, cbtype: CALLBACK_TYPE, callback: Callable):
         """Add callback function to set of callback functions
 
         Args:
@@ -121,12 +123,15 @@ class XPWebsocketAPI(XPRestAPI):
         """
         self.callbacks[cbtype.value].add(callback)
 
+    def set_callback(self, cbtype: CALLBACK_TYPE, callback: Callable):
+        self.add_callback(cbtype=cbtype, callback=callback)
+
     def execute_callbacks(self, cbtype: CALLBACK_TYPE, **kwargs) -> bool:
         """Execute list of callback functions, all with same arguments passed as keyword arguments
 
-           returns
+        returns
 
-           bool: Whether error reported during execution
+        bool: Whether error reported during execution
 
         """
         cbs = self.callbacks[cbtype.value]
@@ -266,9 +271,7 @@ class XPWebsocketAPI(XPRestAPI):
                                 logger.warning("Some features may not work properly")
                             elif curr > xpmax:
                                 logger.warning(f"X-Plane version {curr} ({self.xp_version}) detected, maximal version is {xpmax}")
-                                logger.warning(
-                                    f"Some features may not work properly (not tested against X-Plane version after {xpmax})"
-                                )
+                                logger.warning(f"Some features may not work properly (not tested against X-Plane version after {xpmax})")
                             else:
                                 logger.info(f"X-Plane version requirements {xpmin}<= {curr} <={xpmax} satisfied")
                         logger.debug("..connected, starting websocket listener..")
