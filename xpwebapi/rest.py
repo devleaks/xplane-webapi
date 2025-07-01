@@ -522,7 +522,7 @@ class XPRestAPI(API):
         logger.error(f"commands_meta: {response} {response.reason} {response.text}")
         return []
 
-    def set_connection_from_beacon_data(self, beacon_data: "BeaconData", same_host: bool, remote_tcp_port: PROXY_TCP_PORT):
+    def set_connection_from_beacon_data(self, beacon_data: "BeaconData", same_host: bool, remote_tcp_port: int = PROXY_TCP_PORT):
         API_TCP_PORT = 8086
 
         XP_MIN_VERSION = 121400
