@@ -612,18 +612,21 @@ class XPWebsocketAPI(XPRestAPI):
                 message = self.ws.receive(timeout=self.RECEIVE_TIMEOUT)
                 if message is None:
                     if to_count % TO_COUNT_INFO == 0:
-                        logger.info("waiting for response from simulator..")  # at {datetime.now()}")
+                        logger.info(f"..receive timeout ({self.RECEIVE_TIMEOUT} secs.), waiting for response from simulator..")  # at {datetime.now()}")
                     elif to_count % TO_COUNT_DEBUG == 0:
-                        logger.debug("waiting for response from simulator..")  # at {datetime.now()}")
+                        logger.debug(f"..receive timeout ({self.RECEIVE_TIMEOUT} secs.), waiting for response from simulator..")  # at {datetime.now()}")
                     to_count = to_count + 1
                     continue
 
                 now = datetime.now()
                 if total_reads == 0:
-                    logger.info(f"..first message at {now.replace(microsecond=0)} ({round((now - start_time).seconds, 2)} secs.) {'<'*attention}")
+                    logger.info(f"..first message at {now.replace(microsecond=0)} ({round((now - start_time).seconds, 2)} secs.).. {'<'*attention}")
                     self.status = CONNECTION_STATUS.RECEIVING_DATA
                     self.RECEIVE_TIMEOUT = 5  # when connected, check less often, message will arrive
 
+                if to_count > 0:
+                    logger.info(f"..receive ok..")
+                    to_count = 0
                 total_reads = total_reads + 1
                 delta = now - last_read_ts
                 total_read_time = total_read_time + delta.microseconds / 1000000
