@@ -363,19 +363,8 @@ class XPRestAPI(API):
         if value is None:  # set a default value for it
             logger.warning(f"dataref {dataref.path} has no new value")
             return False
-            # if dataref.value_type == DATAREF_DATATYPE.DATA.value:
-            #     value = ""
-            # elif dataref.value_type == DATAREF_DATATYPE.INTEGER.value:
-            #     value = 0
-            # elif dataref.value_type in [DATAREF_DATATYPE.FLOAT.value, DATAREF_DATATYPE.DOUBLE.value]:
-            #     value = 0.0
-            # elif dataref.is_array:
-            #     logger.error("no value for array")
-            #     return False
-            # logger.debug(f"no new value to write, using default {value}")
-        if dataref.value_type == DATAREF_DATATYPE.DATA.value:  # Encode string
-            value = str(value).encode("ascii")
-            value = base64.b64encode(value).decode("ascii")
+        if dataref.value_type == DATAREF_DATATYPE.DATA.value or type(value) is bytes:
+            value = dataref.b64encoded
         payload = {REST_KW.DATA.value: value}
         url = f"{self.rest_url}/datarefs/{dataref.ident}/value"
         if dataref.index is not None and dataref.value_type in [DATAREF_DATATYPE.INTARRAY.value, DATAREF_DATATYPE.FLOATARRAY.value]:
@@ -418,7 +407,7 @@ class XPRestAPI(API):
         logger.error(f"rest_execute: {response}, {data}")
         return False
 
-    def dataref_value(self, dataref: Dataref) -> DatarefValueType:
+    def dataref_value(self, dataref: Dataref, raw: bool = False, no_decode: bool = False) -> DatarefValueType:
         """Get dataref value through REST API
 
         Value is not stored or cached.
@@ -428,14 +417,18 @@ class XPRestAPI(API):
             return None
         if not dataref.valid:
             logger.error(f"dataref {dataref.path} not valid")
-            return False
+            return None
         url = f"{self.rest_url}/datarefs/{dataref.ident}/value"
         response = self.session.get(url)
         if response.status_code == 200:
             respjson = response.json()
             webapi_logger.info(f"GET {dataref.path}: {url} = {respjson}")
-            if REST_KW.DATA.value in respjson and type(respjson[REST_KW.DATA.value]) in [bytes, str]:
-                return base64.b64decode(respjson[REST_KW.DATA.value]).decode("ascii").replace("\u0000", "")
+            if not raw and REST_KW.DATA.value in respjson and type(respjson[REST_KW.DATA.value]) in [bytes, str]:
+                try:
+                    return base64.b64decode(respjson[REST_KW.DATA.value])
+                except:
+                    logger.warning(f"cannot decode: {response} {response.reason} {response.text}", exc_info=True)
+                return respjson[REST_KW.DATA.value]
             return respjson[REST_KW.DATA.value]
         webapi_logger.info(f"ERROR {dataref.path}: {response} {response.reason} {response.text}")
         logger.error(f"dataref_value: {response} {response.reason} {response.text}")

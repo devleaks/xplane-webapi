@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## 3.0.0 - 2025-07-07
+
+Breaking change.
+
+Datarefs of value type "data" are returned as *bytes*.
+The API only performs BASE64 encode/decode with no further interpretation.
+
+Convenience methods `get_string_value(encoding: str)` and `set_string_value(value: str, encoding: str)` are provided
+to Dataref to get/set string values.
+In all cases, string encoding need to be provided. There is no default encoding.
+
+Note: It is possible to use python package `chardet` to guess encoding from bytes.
+
 ## 2.0.1 - 2025-06-15
 
 Allows for multiple callback functions.

@@ -1,5 +1,5 @@
 # Interface
-from .api import Dataref, Command, DatarefValueType
+from .api import Dataref, Command, DatarefValueType, DATAREF_DATATYPE
 from .beacon import XPBeaconMonitor, BeaconData
 from .rest import XPRestAPI
 from .ws import XPWebsocketAPI, CALLBACK_TYPE
@@ -22,4 +22,4 @@ def udp_api(**kwargs):
     return XPUDPAPI(**kwargs)
 
 
-version = "2.2.1"
+version = "3.0.0"

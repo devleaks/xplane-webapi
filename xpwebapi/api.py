@@ -10,6 +10,7 @@ from typing import List
 
 type DatarefValueType = bool | str | int | float
 
+
 # local logger
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
@@ -58,6 +59,8 @@ class XPLANE_API_VERSIONS(Enum):
     v1 = "12.1.1"
     v2 = "12.1.4"
 
+
+ENCODING_CONFIDENCE_THRESHOLD = 0.01
 
 # #############################################
 # CORE ENTITIES - META DATA
@@ -265,7 +268,7 @@ class API(ABC):
         return Command(path=path, api=self)
 
     @abstractmethod
-    def write_dataref(self, dataref: Dataref) -> bool:
+    def write_dataref(self, dataref: Dataref) -> bool | int:
         """Write Dataref value to X-Plane if Dataref is writable
 
         Args:
@@ -277,7 +280,7 @@ class API(ABC):
         return False
 
     @abstractmethod
-    def dataref_value(self, dataref: Dataref) -> DatarefValueType:
+    def dataref_value(self, dataref: Dataref, raw: bool = False) -> DatarefValueType:
         """Returns Dataref value from simulator
 
         Args:
@@ -404,6 +407,7 @@ class Dataref:
     def __init__(self, path: str, api: API, auto_save: bool = False):
         self._cached_meta: DatarefMeta | None = None
         self._monitored = 0
+        self._encoding = None
         self._new_value = None
         self.auto_save = auto_save
 
@@ -451,6 +455,64 @@ class Dataref:
         self._new_value = value
         if self.auto_save:
             self.write()
+
+    def get_string_value(self, encoding: str) -> str | None:
+        """Decodes current dataref value and replaces it with the decoded string value
+
+        Args:
+            encoding| None ([str]): [description] (default: `None`)
+
+        Returns:
+            [type]: [description]
+        """
+        if self.value_type not in ["data"]:
+            logger.warning("value type is not data")
+            return None
+        value_bytes = self.value
+        if type(value_bytes) is not bytes:
+            logger.warning("value is not bytes")
+            return None
+        if self._encoding is not None and self._encoding != encoding:
+            logger.warning(f"string value encodings differ {self._encoding} vs {encoding}")
+        try:
+            ret = value_bytes.decode(encoding)
+            self._encoding = encoding
+            return ret
+        except:
+            logger.warning(f"could not decode value {value_bytes} with encoding {encoding}", exc_info=True)
+        return None
+
+    def set_string_value(self, value: str, encoding: str):
+        """Set dataref value to base64 encoded representation of string value
+
+        [description]
+
+        Args:
+            value (str): [description]
+            encoding (str): [description]
+        """
+        if type(value) is not str:
+            logger.warning("value is not a string")
+            return value
+        if self.value_type != DATAREF_DATATYPE.DATA.value:
+            logger.warning("value type is not data")
+            return
+        if self._encoding is not None and self._encoding != encoding:
+            logger.warning(f"string value encodings differ {self._encoding} vs {encoding}")
+        try:
+            self.value = value.encode(encoding=encoding)
+            self._encoding = encoding
+        except:
+            logger.warning(f"could not encode string '{value}'' with encoding {encoding}", exc_info=True)
+
+    @property
+    def b64encoded(self) -> str | None:
+        if self.value_type == DATAREF_DATATYPE.DATA.value:
+            try:
+                return base64.b64encode(self.value).decode("ascii")
+            except:
+                logger.warning(f"could not base64 encode value {self.value}", exc_info=True)
+        return None
 
     @property
     def ident(self) -> int | None:
@@ -565,10 +627,14 @@ class Dataref:
 
         else:
             # 2. Scalar values
-            # 2.1  String
-            if self.value_type == "data" and type(raw_value) in [bytes, str]:
-                return base64.b64decode(raw_value).decode("ascii").replace("\u0000", "")
-
+            # 2.1  Bytes
+            if self.value_type == "data" and type(raw_value) is str:
+                ret = raw_value
+                try:
+                    return base64.b64decode(raw_value)
+                except:
+                    logger.warning(f"failed to decode base64 {self.name}, {self.value_type}: {type(raw_value)} {raw_value}, returning raw value")
+                return raw_value
             # 2.1  Number
             elif type(raw_value) not in [int, float]:
                 logger.warning(f"unknown value type for {self.name}: {type(raw_value)}, {raw_value}, expected {self.value_type}")

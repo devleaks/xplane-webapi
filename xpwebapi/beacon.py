@@ -296,9 +296,10 @@ class XPBeaconMonitor:
                 ) = struct.unpack("<BBiiIH", data)
                 hostname = packet[21:-1]  # the hostname of the computer
                 hostname = hostname[0 : hostname.find(0)]
+                hostname = hostname.decode()
                 # raknet_port = data[-1]
                 if beacon_major_version == 1 and beacon_minor_version <= 2 and application_host_id == 1:
-                    self.data = BeaconData(host=sender[0], port=port, hostname=hostname.decode(), xplane_version=xplane_version_number, role=role)
+                    self.data = BeaconData(host=sender[0], port=port, hostname=hostname, xplane_version=xplane_version_number, role=role)
                     logger.info(f"XPlane Beacon Version: {beacon_major_version}.{beacon_minor_version}.{application_host_id} (role: {self.ROLES[role]})")
                 else:
                     logger.warning(f"XPlane Beacon Version not supported: {beacon_major_version}.{beacon_minor_version}.{application_host_id}")

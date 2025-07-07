@@ -15,7 +15,7 @@ from packaging.version import Version
 
 from simple_websocket import Client, ConnectionClosed
 
-from .api import CONNECTION_STATUS, webapi_logger, Dataref, Command
+from .api import CONNECTION_STATUS, DATAREF_DATATYPE, webapi_logger, Dataref, Command
 from .rest import REST_KW, XPRestAPI
 
 # local logging
@@ -970,7 +970,9 @@ class XPWebsocketAPI(XPRestAPI):
         """
         if self.use_rest:
             return super().write_dataref(dataref=dataref)
-        return self.set_dataref_value(path=dataref.name, value=dataref._new_value)
+        if dataref.value_type == DATAREF_DATATYPE.DATA.value:
+            return self.set_dataref_value(path=dataref.name, value=dataref.b64encoded)
+        return self.set_dataref_value(path=dataref.name, value=dataref._new_valu)
 
     def monitor_command_active(self, command: Command) -> bool | int:
         """Starts monitoring single command for activity.
