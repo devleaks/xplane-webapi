@@ -469,15 +469,19 @@ class Dataref:
             logger.warning("value type is not data")
             return None
         value_bytes = self.value
+        value_bytes_stripped = value_bytes.rstrip(b'\x00')  # remove trailing 0 (bytes with value 0)
+        if len(value_bytes_stripped) > 0:
+            value_bytes = value_bytes_stripped
         if type(value_bytes) is not bytes:
             logger.warning("value is not bytes")
             return None
         if self._encoding is not None and self._encoding != encoding:
             logger.warning(f"string value encodings differ {self._encoding} vs {encoding}")
         try:
-            ret = value_bytes.decode(encoding)
+            value = value_bytes.decode(encoding)
+            value = value.replace("\u0000", "")  # remove trailing 0 (bytes with value 0)
             self._encoding = encoding
-            return ret
+            return
         except:
             logger.warning(f"could not decode value {value_bytes} with encoding {encoding}", exc_info=True)
         return None

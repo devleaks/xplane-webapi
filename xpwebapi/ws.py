@@ -742,12 +742,7 @@ class XPWebsocketAPI(XPRestAPI):
             self.ws = None
             self.status = CONNECTION_STATUS.WEBSOCKET_DISCONNNECTED  # should check rest api reachable
             dummy = super().connected
-            if self.on_close is not None:
-                try:
-                    self.on_close()
-                except:
-                    logger.error("websocket on_close", exc_info=True)
-
+            self.execute_callbacks(CALLBACK_TYPE.ON_CLOSE)
         logger.info("..websocket listener terminated")
 
     @property
@@ -972,7 +967,7 @@ class XPWebsocketAPI(XPRestAPI):
             return super().write_dataref(dataref=dataref)
         if dataref.value_type == DATAREF_DATATYPE.DATA.value:
             return self.set_dataref_value(path=dataref.name, value=dataref.b64encoded)
-        return self.set_dataref_value(path=dataref.name, value=dataref._new_valu)
+        return self.set_dataref_value(path=dataref.name, value=dataref._new_value)
 
     def monitor_command_active(self, command: Command) -> bool | int:
         """Starts monitoring single command for activity.
