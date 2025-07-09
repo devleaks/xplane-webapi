@@ -733,6 +733,7 @@ class XPWebsocketAPI(XPRestAPI):
                 self.ws_lsnr_not_running.set()
                 self.status = CONNECTION_STATUS.WEBSOCKET_DISCONNNECTED  # should check rest api reachable
                 dummy = super().connected
+                self.execute_callbacks(CALLBACK_TYPE.ON_CLOSE)
 
             except:
                 logger.error("ws_receiver: other error", exc_info=True)
