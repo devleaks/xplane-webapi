@@ -27,6 +27,7 @@ XP_MIN_VERSION_STR = "12.1.4"
 XP_MAX_VERSION = 121499
 XP_MAX_VERSION_STR = "12.2.1"
 
+MAX_WARNING_COUNT = 5
 
 # WEB API RETURN CODES
 class WS_RESPONSE_TYPE(Enum):
@@ -198,7 +199,6 @@ class XPWebsocketAPI(XPRestAPI):
 
     def connect_websocket(self):
         """Create and open Websocket connection if REST API is reachable"""
-        warn_count = 0
         if self.ws is None:
             url = self.ws_url
             if url is not None:
@@ -209,11 +209,13 @@ class XPWebsocketAPI(XPRestAPI):
                         self.reload_caches()
                         logger.info(f"websocket opened at {url}")
                         self.execute_callbacks(CALLBACK_TYPE.ON_OPEN)
-                        warn_count = 0
                     else:
-                        if warn_count < 5 or warn_count % 20 == 0:
+                        if self._unreach_count <= MAX_WARNING_COUNT:
+                            last_warning = " (last warning)" if self._unreach_count == MAX_WARNING_COUNT else ""
+                            logger.warning(f"rest api unreachable{last_warning}")
+                        if self._unreach_count % 50 == 0:
                             logger.warning("rest api unreachable")
-                        warn_count = warn_count + 1
+                        self._unreach_count = self._unreach_count + 1
                 except:
                     logger.error("cannot connect", exc_info=True)
             else:

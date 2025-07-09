@@ -77,6 +77,7 @@ class XPRestAPI(API):
 
         self._last_updated = 0
         self._warning_count = 0
+        self._unreach_count = 0
         self._dataref_by_id = {}  # {dataref-id: Dataref}
 
         self.session = requests.Session()
@@ -138,6 +139,9 @@ class XPRestAPI(API):
             response = self.session.get(CHECK_API_URL)
             webapi_logger.info(f"GET {CHECK_API_URL}: {response}")
             if response.status_code == 200:
+                if self._unreach_count > 0:
+                    logger.info("rest api reachable")
+                    self._unreach_count = 0
                 self.status = CONNECTION_STATUS.REST_API_REACHABLE
                 return True
         except requests.exceptions.ConnectionError:
