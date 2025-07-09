@@ -54,12 +54,13 @@ class CONNECTION_STATUS(IntEnum):
 
 
 class XPLANE_API_VERSIONS(Enum):
-    """API version number (string) versus X-Plane release number of that version"""
+    """API version number (string) versus X-Plane release number when that API version appeared for the first time"""
 
     v1 = "12.1.1"
     v2 = "12.1.4"
 
 
+SORT_INDICES = False
 ENCODING_CONFIDENCE_THRESHOLD = 0.01
 
 # #############################################
@@ -119,7 +120,8 @@ class DatarefMeta(APIObjMeta):
         """
         if i not in self.indices:
             self.indices.append(i)
-            self.indices.sort()
+            if SORT_INDICES:
+                self.indices.sort()
 
     def remove_index(self, i):
         # there is a problem if we remove a key here, and then still get
@@ -420,6 +422,8 @@ class Dataref:
             self.path = self.name[: self.name.find("[")]  # sim/some/values
             self.index = int(self.name[self.name.find("[") + 1 : self.name.find("]")])  # 4
 
+        self._err = 0
+
     def __str__(self) -> str:
         if self.index is not None:
             return f"{self.path}[{self.index}]={self.value}"
@@ -483,6 +487,7 @@ class Dataref:
             self._encoding = encoding
             return
         except:
+            self.add_error()
             logger.warning(f"could not decode value {value_bytes} with encoding {encoding}", exc_info=True)
         return None
 
@@ -507,6 +512,7 @@ class Dataref:
             self.value = value.encode(encoding=encoding)
             self._encoding = encoding
         except:
+            self.add_error()
             logger.warning(f"could not encode string '{value}'' with encoding {encoding}", exc_info=True)
 
     @property
@@ -523,6 +529,7 @@ class Dataref:
         """Get dataref identifier meta data"""
         if not self.valid:
             logger.error(f"dataref {self.path} not valid")
+            self.add_error()
             return None
         return self.meta.ident
 
@@ -539,6 +546,7 @@ class Dataref:
             - DATA = "data" """
         if not self.valid:
             logger.error(f"dataref {self.path} not valid")
+            self.add_error()
             return None
         return self.meta.value_type
 
@@ -547,6 +555,7 @@ class Dataref:
         """Whether dataref can be written back to X-Plane"""
         if not self.valid:
             logger.error(f"dataref {self.path} not valid")
+            self.add_error()
             return False
         return self.meta.is_writable
 
@@ -555,6 +564,7 @@ class Dataref:
         """Whether dataref is an array"""
         if not self.valid:
             logger.error(f"dataref {self.path} not valid")
+            self.add_error()
             return False
         return self.value_type in [DATAREF_DATATYPE.INTARRAY.value, DATAREF_DATATYPE.FLOATARRAY.value]
 
@@ -562,6 +572,7 @@ class Dataref:
     def selected_indices(self) -> bool:
         if not self.valid:
             logger.error(f"dataref {self.path} not valid")
+            self.add_error()
             return False
         return len(self.meta.indices) > 0
 
@@ -582,6 +593,14 @@ class Dataref:
     def monitored_count(self) -> int:
         """How many times dataref is monitored"""
         return self._monitored
+
+    def add_error(self, message: str = ""):
+        self._err = self._err + 1
+        if message != "":
+            logger.warning(message)
+
+    def reset_errors(self):
+        self._err = 0
 
     def inc_monitor(self):
         """Register dataref for monitoring"""
@@ -670,6 +689,8 @@ class Command:
         self.name = path  # some/command
         self.duration = duration
 
+        self._err = 0
+
     def __str__(self) -> str:
         return f"{self.path}" if self.name is None else f"{self.name} ({self.path})"
 
@@ -681,6 +702,7 @@ class Command:
                 r = self.api.all_commands.get(self.path)
                 if r is not None:
                     return r
+                self.add_error()
                 logger.error(f"command {self.path} has no api meta data in cache")
             else:
                 logger.error("no cache data")
@@ -696,6 +718,7 @@ class Command:
         """Get command identifier meta data"""
         if not self.valid:
             logger.error(f"command {self.path} not valid")
+            self.add_error()
             return None
         return self.meta.ident
 
@@ -703,8 +726,17 @@ class Command:
     def description(self) -> str | None:
         """Get command description as provided by X-Plane"""
         if not self.valid:
+            self.add_error()
             return None
         return self.meta.description
+
+    def add_error(self, message: str = ""):
+        self._err = self._err + 1
+        if message != "":
+            logger.warning(message)
+
+    def reset_errors(self):
+        self._err = 0
 
     def execute(self, duration: float = 0.0) -> bool:
         """Execute command through API supplied at creation"""
@@ -719,4 +751,4 @@ class Command:
 
     def unmonitor(self) -> bool:
         """Suppress monitor command activation through Websocket API"""
-        return self.unmonitor(on=False)
+        return self.monitor(on=False)
