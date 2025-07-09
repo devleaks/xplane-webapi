@@ -59,7 +59,7 @@ class XPWebsocketAPI(XPRestAPI):
     The monitor tests for REST API reachability, and if reachable, creates a Websocket.
     If the websocket exists and is opened, requests can be made through it and responses expected.
 
-    To handle responses, a _receiver_ (XPWebsocketAPI.ws_receiver) can be started (XPWebsocketAPI.start) and stopped (XPWebsocketAPI.stop)
+    To handle responses, a _receiver_ (XPWebsocketAPI.ws_listener) can be started (XPWebsocketAPI.start) and stopped (XPWebsocketAPI.stop)
     to process responses coming through the websocket.
 
     See https://developer.x-plane.com/article/x-plane-web-api/#Websockets_API.
@@ -610,9 +610,10 @@ class XPWebsocketAPI(XPRestAPI):
         while self.websocket_listener_running:
             try:
                 message = self.ws.receive(timeout=self.RECEIVE_TIMEOUT)
+                # probably we don't receive messages because X-Plane has nothing to send...
                 if message is None:
                     if to_count % TO_COUNT_INFO == 0:
-                        logger.info(f"..receive timeout ({self.RECEIVE_TIMEOUT} secs.), waiting for response from simulator..")  # at {datetime.now()}")
+                        logger.debug(f"..receive timeout ({self.RECEIVE_TIMEOUT} secs.), waiting for response from simulator..")  # at {datetime.now()}")
                     elif to_count % TO_COUNT_DEBUG == 0:
                         logger.debug(f"..receive timeout ({self.RECEIVE_TIMEOUT} secs.), waiting for response from simulator..")  # at {datetime.now()}")
                     to_count = to_count + 1
@@ -625,7 +626,7 @@ class XPWebsocketAPI(XPRestAPI):
                     self.RECEIVE_TIMEOUT = 5  # when connected, check less often, message will arrive
 
                 if to_count > 0:
-                    logger.info(f"..receive ok..")
+                    logger.debug(f"..receive ok..")
                     to_count = 0
                 total_reads = total_reads + 1
                 delta = now - last_read_ts
@@ -736,7 +737,7 @@ class XPWebsocketAPI(XPRestAPI):
                 self.execute_callbacks(CALLBACK_TYPE.ON_CLOSE)
 
             except:
-                logger.error("ws_receiver: other error", exc_info=True)
+                logger.error("ws_listener error", exc_info=True)
 
         if self.ws is not None:  # in case we did not receive a ConnectionClosed event
             self.ws.close()
