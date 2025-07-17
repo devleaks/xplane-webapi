@@ -4,7 +4,7 @@
 ## Usage of REST API
 
 ```python
-import xpwebapi, CALLBACK_TYPE
+import xpwebapi
 
 # REST API
 api = xpwebapi.rest_api(host="192.168.1.140", port=8080, api_version="v2")  # defaults: host="127.0.0.1", port=8086, api="/api", use_cache=False
@@ -26,9 +26,9 @@ mapview.execute()
 ## Usage of Websocket API
 
 ```python
-import xpwebapi
+from xpwebapi import ws_api, CALLBACK_TYPE
 
-ws = xpwebapi.ws_api(host="192.168.1.140", port=8080)  # defaults to v2 for Websocket
+ws = ws_api(host="192.168.1.140", port=8080)  # defaults to v2 for Websocket
 
 def dataref_monitor(dataref: str, value: Any):
     print(f"dataref updated: {dataref}={value}")
@@ -36,8 +36,8 @@ def dataref_monitor(dataref: str, value: Any):
 def command_active_monitor(command: str, active: bool):
     print(f"command activated: {command}={active}")
 
-ws.add_callback(cbtype=CALLBACK_TYPE.DATAREF_UPDATE, CALLBACK=dataref_monitor)
-ws.add_callback(cbtype=CALLBACK_TYPE.COMMAND_ACTIVE, CALLBACK=command_active_monitor)
+ws.add_callback(cbtype=CALLBACK_TYPE.DATAREF_UPDATE, callback=dataref_monitor)
+ws.add_callback(cbtype=CALLBACK_TYPE.COMMAND_ACTIVE, callback=command_active_monitor)
 
 ws.connect()
 ws.wait_connection() # blocks until X-Plane is reachable
