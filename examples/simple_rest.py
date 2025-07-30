@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO, format=FORMAT, datefmt="%H:%M:%S")
 
 print("xpwebapi version", xpwebapi.version)
 
-api = xpwebapi.rest_api(host="192.168.1.140", port=8080, api_version="v2")  # defaults: host="127.0.0.1", port=8086, api="/api", use_cache=False
+api = xpwebapi.rest_api(host="192.168.1.141", port=8080, api_version="v2")  # defaults: host="127.0.0.1", port=8086, api="/api", use_cache=False
 
 # options: no_cache, version
 
@@ -28,6 +28,7 @@ dataref = api.dataref("sim/cockpit2/clock_timer/local_time_seconds")
 print(dataref)
 
 # fails:
+print("error 'not a websocket api' is expected")
 dataref.monitor()
 
 # # dataref.value = 6
@@ -38,4 +39,5 @@ mapview = api.command("sim/map/show_current")
 mapview.execute()
 
 # fails:
+print("error 'not a websocket api' is expected")
 mapview.monitor()

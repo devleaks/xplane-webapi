@@ -1,11 +1,9 @@
 import os
 import sys
+import logging
+import datetime
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-
-import logging
-import json
-from datetime import datetime
 
 import xpwebapi
 
@@ -17,139 +15,148 @@ logger = logging.getLogger(__name__)
 # logger.setLevel(logging.INFO)
 
 
+# ACFT, Aircraft/Laminar Research/Lancair Evolution/N844X.acf
+# TAIL, N844X
+# DATE, 01/18/2023
+# PRES, 30.01
+# DISA, 0
+# WIND, 270,15
 HEADER = {
-    "sim/version/xplane_internal_version",
-    "sim/aircraft/view/acf_ICAO",
-    "sim/aircraft/engine/acf_num_engines",
+    "sim/aircraft/view/acf_relative_path",
     "sim/aircraft/view/acf_tailnum",
-    "sim/aircraft/weight/acf_m_empty",
-    "sim/aircraft/weight/acf_m_max",
+    "sim/cockpit2/clock_timer/current_month",
+    "sim/cockpit2/clock_timer/current_day",
+    "sim/weather/barometer_current_inhg",
+    "sim/weather/barometer_sealevel_inhg",
+    "sim/weather/aircraft/wind_now_direction_degt",
+    "sim/weather/aircraft/wind_now_speed_msc"  # 1 m/s = 1,94384449 knt
 }
 
+# They MUST BE the ZULU time, then the longitude, latitude, altitude in feet, magnetic heading in degrees, then pitch and roll in degrees.
 FDR_DATA = {
-    "sim/cockpit2/gauges/indicators/wind_heading_deg_mag",
-    "sim/cockpit2/gauges/indicators/wind_speed_kts",
-    "sim/cockpit2/temperature/outside_air_temp_degc",
-    "sim/time/total_flight_time_sec",
-    "sim/time/zulu_time_sec",
-    "sim/time/is_in_replay",
-    "sim/time/paused",
-    "sim/time/total_running_time_sec",
-    "sim/flightmodel/position/latitude",
+    "sim/cockpit2/clock_timer/zulu_time_hours",
+    "sim/cockpit2/clock_timer/zulu_time_minutes",
+    "sim/cockpit2/clock_timer/zulu_time_seconds",
     "sim/flightmodel/position/longitude",
-    "sim/flightmodel/position/groundspeed",
-    "sim/cockpit2/gauges/indicators/heading_vacuum_deg_mag_pilot",
-    "sim/cockpit2/gauges/indicators/radio_altimeter_height_ft_pilot",
-    "sim/flightmodel/misc/h_ind",
-    "sim/flightmodel/position/vh_ind_fpm",
-    "sim/flightmodel/position/indicated_airspeed",
-    "sim/flightmodel/misc/machno",
-    "sim/flightmodel/position/true_theta",
-    "sim/flightmodel/position/true_phi",
-    "sim/flightmodel/position/alpha",
-    "sim/flightmodel/misc/g_total",
-    "sim/flightmodel/position/hpath",
-    "sim/flightmodel/position/magnetic_variation",
-    "sim/flightmodel/engine/ENGN_running",
-    "sim/flightmodel/engine/ENGN_thro",
-    "sim/cockpit2/engine/indicators/power_watts[0]",
-    # "sim/cockpit2/engine/indicators/power_watts",
-    "sim/cockpit2/controls/left_brake_ratio",
-    "sim/cockpit2/controls/right_brake_ratio",
-    "sim/cockpit2/controls/parking_brake_ratio",
-    "sim/cockpit2/controls/gear_handle_down",
-    "sim/cockpit2/controls/yoke_pitch_ratio",
-    "sim/cockpit2/controls/yoke_roll_ratio",
-    "sim/cockpit2/controls/yoke_heading_ratio",
-    "sim/cockpit2/controls/flap_ratio",
-    "sim/cockpit2/controls/speedbrake_ratio",
-    "sim/cockpit/autopilot/autopilot_mode",
-    "sim/flightmodel/weight/m_total",
-    "sim/flightmodel/weight/m_fuel_total",
-    "sim/cockpit2/pressurization/indicators/cabin_altitude_ft",
-    "sim/cockpit2/pressurization/indicators/cabin_vvi_fpm",
-    "sim/cockpit2/radios/indicators/nav1_nav_id",
-    "sim/cockpit/radios/nav1_course_degm",
-    "sim/cockpit/radios/nav1_slope_degt",
-    "sim/cockpit/radios/nav1_dme_dist_m",
-    "sim/cockpit/radios/nav1_hdef_dot",
-    "sim/cockpit/radios/nav1_vdef_dot",
-    "sim/cockpit/electrical/beacon_lights_on",
-    "sim/cockpit/electrical/landing_lights_on",
-    "sim/cockpit/electrical/nav_lights_on",
-    "sim/cockpit/electrical/strobe_lights_on",
-    "sim/cockpit/electrical/taxi_light_on",
-    "sim/flightmodel/controls/ail_trim",
-    "sim/flightmodel/controls/rud_trim",
-    "sim/flightmodel/controls/slatrat",
-    "sim/flightmodel/position/elevation",
     "sim/flightmodel/position/latitude",
-    "sim/flightmodel/position/local_vx",
-    "sim/flightmodel/position/local_vy",
-    "sim/flightmodel/position/local_vz",
-    "sim/flightmodel/position/local_x",
-    "sim/flightmodel/position/local_y",
-    "sim/flightmodel/position/local_z",
-    "sim/flightmodel/position/longitude",
-    "sim/flightmodel/position/phi",
-    "sim/flightmodel/position/psi",
-    "sim/flightmodel/position/theta",
-    "sim/flightmodel2/controls/flap1_deploy_ratio",
-    "sim/flightmodel2/controls/flap2_deploy_ratio",
-    "sim/flightmodel2/controls/speedbrake_ratio",
-    "sim/flightmodel2/controls/wingsweep_ratio",
-    "sim/flightmodel2/engines/throttle_used_ratio",
-    "sim/flightmodel2/gear/deploy_ratio",
+    "sim/cockpit/pressure/cabin_altitude_actual_ft",
+    "sim/cockpit2/gauges/indicators/heading_electric_deg_mag_pilot",
+    "sim/cockpit2/gauges/indicators/pitch_electric_deg_pilot",
+    "sim/cockpit2/gauges/indicators/roll_electric_deg_pilot",
 }
 
+FDR_OPTIONAL = {
+    "sim/flightmodel/misc/g_total",
+}
+
+
+FILENAME = "out.fdr"
 
 class FDR:
 
     def __init__(self, api) -> None:
+        self.ws = api
         self.header_ok = False
         self.header = {}
         self.lines = []
         self.file = None
         self.datarefs = {}
+        self.writes = 0
+        self.last_seconds = -1
         self.init()
 
     def init(self):
-        self.datarefs = {path: ws.dataref(path) for path in self.get_dataref_names()}
-        ws.on_dataref_update = self.dataref_changed
-        ws.register_bulk_dataref_value_event(datarefs=self.datarefs, on=True)
+        self.datarefs = {path: self.ws.dataref(path) for path in self.get_dataref_names()}
+        self.ws.add_callback(cbtype=xpwebapi.CALLBACK_TYPE.ON_DATAREF_UPDATE, callback=self.dataref_changed)
+
+    def start(self):
         ws.connect()
+        ws.wait_connection()
+        ws.monitor_datarefs(datarefs=self.datarefs, reason="Flight data recorder")
         ws.start()
 
     def get_dataref_names(self) -> set:
-        return HEADER | FDR_DATA
+        return HEADER | FDR_DATA | FDR_OPTIONAL
 
-    def dataref_changed(self, path, value):
-        ts = datetime.now().timestamp()
+    def print_header(self):
+        with open(FILENAME, "w") as fp:
+            print("A\r", end="", file=fp)
+            print("4", file=fp)
+            print(f"ACFT, {self.header.get('sim/aircraft/view/acf_relative_path')}", file=fp)
+            tail = self.header.get('sim/aircraft/view/acf_tailnum')
+            tail = tail.rstrip(b"\x00")
+            print(f"TAIL, {tail}", file=fp)
+            print(f"DATE, {self.header.get('sim/cockpit2/clock_timer/current_month')}/{self.header.get('sim/cockpit2/clock_timer/current_day')}/2025", file=fp)
+            print(f"PRES, {round(self.header.get('sim/weather/barometer_sealevel_inhg'), 2)}", file=fp)
+            print("DISA, 0", file=fp)
+            print(f"WIND, {int(self.header.get('sim/weather/aircraft/wind_now_direction_degt'))}, {round(self.header.get('sim/weather/aircraft/wind_now_speed_msc') * 1.94384449, 2)}", file=fp)
+            print("", file=fp)
+            print("COMM, Optional datarefs", file=fp)
+            for d in FDR_OPTIONAL:
+                print(f"DREF, {d}  1.0 // comment:", file=fp)
+            print("", file=fp)
+            optional = ", ".join(FDR_OPTIONAL)
+            if optional != "":
+                optional = ", " + optional
+            print("COMM, Time, Longitude, Latitude, AltMSL, HDG, Pitch, Roll" + optional, file=fp)
+            print("", file=fp)
+
+        print("FDR header ok")
+
+    def print_line(self) -> str:
+        ts = datetime.datetime.now(datetime.UTC).strftime("%H:%M:%S.%f")
+        lat = self.datarefs.get("sim/flightmodel/position/latitude").value
+        lon = self.datarefs.get("sim/flightmodel/position/longitude").value
+        alt = self.datarefs.get("sim/cockpit/pressure/cabin_altitude_actual_ft").value
+        mag = self.datarefs.get("sim/cockpit2/gauges/indicators/heading_electric_deg_mag_pilot").value
+        pitch = self.datarefs.get("sim/cockpit2/gauges/indicators/pitch_electric_deg_pilot").value
+        roll = self.datarefs.get("sim/cockpit2/gauges/indicators/roll_electric_deg_pilot").value
+        base = f"{ts}, {lon}, {lat}, {alt}, {mag}, {pitch}, {roll}"
+        optional = ""
+        for d in FDR_OPTIONAL:
+            dref = self.datarefs.get(d)
+            optional = optional + f", {dref.value}"
+        return base + optional + "\n"
+
+    def dataref_changed(self, dataref, value):
+        self.datarefs[dataref].value = value
         if not self.header_ok:
-            if path in HEADER:
-                self.header[path] = value
-                self.header_ok = len(self.header) == len(HEADER)
+            if dataref in HEADER:
+                self.header[dataref] = value
+                self.header_ok = len([d for d in self.header if d is not None]) == len(HEADER)
                 if self.header_ok:
-                    with open("out.fdr", "w") as fp:
-                        json.dump(self.header, fp)
-                    self.file = open("out.fdr", "  a")
+                    self.print_header()
+                    # writing buffered lines
+                    self.file = open(FILENAME, "a")
                     for l in self.lines:
+                        self.writes = self.writes + 1
                         self.file.write(l)
+                    print(f"FDR {len(self.lines)} buffered lines written")
                     self.lines = []
                 return
-            self.lines.append(f"{ts},{path},{value}")
+            # buffering lines while header not written
+            if dataref == "sim/cockpit2/clock_timer/zulu_time_seconds":
+                self.last_seconds = value
+                self.lines.append(self.print_line())
             return
-        self.file.write(f"{ts},{path},{value}")
+        if dataref == "sim/cockpit2/clock_timer/zulu_time_seconds" and self.last_seconds != value:
+            self.file.write(self.print_line())
+            self.writes = self.writes + 1
+            self.file.flush()
 
     def terminate(self):
-        self.file.close()
+        if self.file is not None:
+            self.file.close()
+            self.file = None
+        ws.register_bulk_dataref_value_event(datarefs=self.datarefs, on=False)
         self.ws.disconnect()
 
 
 if __name__ == "__main__":
-    ws = xpwebapi.ws_api(host="192.168.1.140", port=8080)
+    ws = xpwebapi.ws_api(host="192.168.1.141", port=8080)
+    fdr = FDR(ws)
     try:
-        fdr = FDR(ws)
+        fdr.start()
     except:
         logger.warning("terminating..", exc_info=True)
-        fdr.close()
+        fdr.terminate()

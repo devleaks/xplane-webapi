@@ -63,6 +63,7 @@ class XPLANE_API_VERSIONS(Enum):
 SORT_INDICES = False
 ENCODING_CONFIDENCE_THRESHOLD = 0.01
 
+
 # #############################################
 # CORE ENTITIES - META DATA
 #
@@ -423,6 +424,7 @@ class Dataref:
             self.index = int(self.name[self.name.find("[") + 1 : self.name.find("]")])  # 4
 
         self._err = 0
+        self._last_updated = datetime.now()
 
     def __str__(self) -> str:
         if self.index is not None:
@@ -449,6 +451,11 @@ class Dataref:
         return self.meta is not None
 
     @property
+    def last_updated(self) -> datetime:
+        """Returns last time of modification"""
+        return self._last_updated
+
+    @property
     def value(self):
         """Return current value of dataref in local application"""
         return self._new_value if self._new_value is not None else self.api.dataref_value(self)
@@ -457,6 +464,7 @@ class Dataref:
     def value(self, value):
         """Set value of dataref in local application"""
         self._new_value = value
+        self._last_updated = datetime.now()
         if self.auto_save:
             self.write()
 
@@ -473,7 +481,7 @@ class Dataref:
             logger.warning("value type is not data")
             return None
         value_bytes = self.value
-        value_bytes_stripped = value_bytes.rstrip(b'\x00')  # remove trailing 0 (bytes with value 0)
+        value_bytes_stripped = value_bytes.rstrip(b"\x00")  # remove trailing 0 (bytes with value 0)
         if len(value_bytes_stripped) > 0:
             value_bytes = value_bytes_stripped
         if type(value_bytes) is not bytes:

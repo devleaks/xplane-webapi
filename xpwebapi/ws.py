@@ -29,6 +29,7 @@ XP_MAX_VERSION_STR = "12.2.1"
 
 MAX_WARNING_COUNT = 5
 
+
 # WEB API RETURN CODES
 class WS_RESPONSE_TYPE(Enum):
     """X-Plane Websocket API response types"""
