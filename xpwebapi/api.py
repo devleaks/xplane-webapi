@@ -493,7 +493,7 @@ class Dataref:
             value = value_bytes.decode(encoding)
             value = value.replace("\u0000", "")  # remove trailing 0 (bytes with value 0)
             self._encoding = encoding
-            return
+            return value
         except:
             self.add_error()
             logger.warning(f"could not decode value {value_bytes} with encoding {encoding}", exc_info=True)

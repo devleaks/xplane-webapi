@@ -15,18 +15,14 @@ logging.basicConfig(level=logging.INFO, format=FORMAT, datefmt="%H:%M:%S")
 
 ws = xpwebapi.ws_api(host="192.168.1.141", port=8080)  # defaults to v2 for Websocket
 
-DATAREFS = [
-    "sim/cockpit2/clock_timer/local_time_seconds",
-    "sim/flightmodel/position/latitude",
-    "sim/flightmodel/position/longitude"
-]
+DATAREFS = ["sim/cockpit2/clock_timer/local_time_seconds", "sim/flightmodel/position/latitude", "sim/flightmodel/position/longitude"]
 
-COMMANDS = [
-    "sim/map/show_current"
-]
+COMMANDS = ["sim/map/show_current"]
+
 
 def dataref_monitor(dataref: str, value: Any):
     print(f"{dataref}={value}")
+
 
 def command_active_monitor(command: str, active: bool):
     print(f"{command}={active}")
