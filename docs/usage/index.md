@@ -62,3 +62,30 @@ print("..disconnecting..")
 ws.disconnect()
 print("..terminated")
 ```
+
+## Integrated! Usage of UDP API
+
+```
+import time
+from typing import Any
+import xpwebapi
+
+def dataref_monitor(dataref: str, value: Any):
+    print(f"{dataref}={value}")
+
+# UDP API
+beacon = xpwebapi.beacon()
+beacon.start_monitor()
+while not beacon.receiving_beacon:
+    print("waiting for beacon..")
+    time.sleep(2)
+xp = xpwebapi.udp_api(beacon=beacon)
+
+xp.add_callback(callback=dataref_monitor)
+
+xp.monitor_dataref(xp.dataref(path="sim/flightmodel/position/indicated_airspeed"))
+xp.monitor_dataref(xp.dataref(path="sim/flightmodel/position/latitude"))
+
+xp.start()
+
+```
