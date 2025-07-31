@@ -774,6 +774,14 @@ class XPWebsocketAPI(XPRestAPI):
         self.rebuild_dataref_ids()
         self.execute_callbacks(CALLBACK_TYPE.AFTER_START, connected=self.connected)
         logger.info(f"{type(self).__name__} started")
+        if not release:
+            logger.info("waiting for termination..")
+            for t in threading.enumerate():
+                try:
+                    t.join()
+                except RuntimeError:
+                    pass
+            logger.info("..terminated")
 
     def stop(self):
         """Stop Websocket monitoring"""

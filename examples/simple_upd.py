@@ -29,7 +29,11 @@ xp.add_callback(callback=dataref_monitor)
 xp.monitor_dataref(xp.dataref(path="sim/flightmodel/position/indicated_airspeed"))
 xp.monitor_dataref(xp.dataref(path="sim/flightmodel/position/latitude"))
 
-while True:
-    values = xp.read_monitored_dataref_values()
-    # print(values)
-    time.sleep(2)
+xp.start()
+
+# Manual alternate:
+#
+# while True:
+#     values = xp.read_monitored_dataref_values()
+#     print(values)
+#     time.sleep(2)

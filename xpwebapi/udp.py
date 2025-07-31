@@ -4,9 +4,10 @@
 import socket
 import struct
 import binascii
+import logging
+import threading
 from time import sleep
 from typing import Tuple, Dict, Callable
-import logging
 
 from .api import API, DatarefValueType, Dataref, Command
 
@@ -15,16 +16,8 @@ logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
 
 
-class XPlaneIpNotFound(Exception):
-    args = "Could not find any running X-Plane instance on network."
-
-
 class XPlaneTimeout(Exception):
-    args = "X-Plane timeout."
-
-
-class XPlaneVersionNotSupported(Exception):
-    args = "X-Plane version not supported."
+    args = tuple("X-Plane timeout")
 
 
 class XPUDPAPI(API):
@@ -46,6 +39,10 @@ class XPUDPAPI(API):
         # values from xplane
         self.xplaneValues = {}
         self.defaultFreq = 1
+        #
+        self.udp_lsnr_not_running = threading.Event()
+        self.udp_lsnr_not_running.set()  # means it is off
+        self.udp_thread = None
         API.__init__(self, host="127.0.0.1", port=49000, api="", api_version="")
 
     def __del__(self):
@@ -244,3 +241,54 @@ class XPUDPAPI(API):
         except:
             raise XPlaneTimeout
         return self.xplaneValues
+
+    @property
+    def udp_listener_running(self) -> bool:
+        return not self.udp_lsnr_not_running.is_set()
+
+    def udp_listener(self):
+        logger.info("starting udp listener..")
+
+        while self.udp_listener_running:
+            try:
+                data = self.read_monitored_dataref_values()
+            except:
+                logger.warning("error", exc_info=True)
+
+        logger.info("..udp listener stopped")
+
+    def start(self, release: bool = True):
+        """Start UDP monitoring"""
+        if not self.udp_listener_running:  # Thread for X-Plane datarefs
+            self.udp_lsnr_not_running.clear()
+            self.udp_thread = threading.Thread(target=self.udp_listener, name="XPlane::UDP Listener")
+            self.udp_thread.start()
+            logger.info("udp listener started")
+        else:
+            logger.info("udp listener already running.")
+
+        if not release:
+            logger.info("waiting for termination..")
+            for t in threading.enumerate():
+                try:
+                    t.join()
+                except RuntimeError:
+                    pass
+            logger.info("..terminated")
+
+    def stop(self):
+        """Stop UDP monitoring"""
+        if self.udp_listener_running:
+            self.udp_lsnr_not_running.set()
+            if self.udp_thread is not None and self.udp_thread.is_alive():
+                logger.debug("stopping udp listener..")
+                wait = self.RECEIVE_TIMEOUT
+                logger.debug(f"..asked to stop udp listener (this may last {wait} secs. for timeout)..")
+                self.udp_thread.join(wait)
+                if self.udp_thread.is_alive():
+                    logger.warning("..thread may hang in ws.receive()..")
+                logger.info("..udp listener stopped")
+        else:
+            logger.debug("udp listener not running")
+
+

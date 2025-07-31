@@ -42,7 +42,7 @@ ws.monitor_command_active(ws.command("sim/map/show_current"))
 print("\n\nplease activate map in X-Plane with sim/map/show_current (usually key stroke 'm')\n")
 
 
-ws.start(release=True)
+ws.start(release=True)  # release means function will return, otherwise blocks inside function until all threads are terminated.
 
 sometime = 60  # seconds
 print(f"waiting {sometime} before terminating")
