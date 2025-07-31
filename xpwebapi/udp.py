@@ -5,7 +5,7 @@ import socket
 import struct
 import binascii
 from time import sleep
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Callable
 import logging
 
 from .api import API, DatarefValueType, Dataref, Command
@@ -38,6 +38,8 @@ class XPUDPAPI(API):
         self.beacon = kwargs.get("beacon")
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.settimeout(10.0)
+        #
+        self.callbacks = set()
         # list of requested datarefs with index number
         self.datarefidx = 0
         self.datarefs = {}  # key = idx, value = dataref
@@ -55,6 +57,37 @@ class XPUDPAPI(API):
     def connected(self) -> bool:
         """Whether X-Plane API is reachable through this API"""
         return False if self.beacon.data is None else self.beacon.data.host is not None
+
+    def add_callback(self, callback: Callable):
+        """Add callback function to set of callback functions
+
+        Please note that in the case of UDP, callback is called for each value it received,
+        whether the value has changed or not.
+
+        Args:
+            callback (Callable): Callback function
+        """
+        self.callbacks.add(callback)
+
+    def execute_callbacks(self, **kwargs) -> bool:
+        """Execute list of callback functions, all with same arguments passed as keyword arguments
+
+        returns
+
+        bool: Whether error reported during execution
+
+        """
+        cbs = self.callbacks
+        if len(cbs) == 0:
+            return True
+        ret = True
+        for callback in cbs:
+            try:
+                callback(**kwargs)
+            except:
+                logger.error(f"callback {callback}", exc_info=True)
+                ret = False
+        return ret
 
     def write_dataref(self, dataref: Dataref) -> bool:
         """Write Dataref value to X-Plane if Dataref is writable
@@ -206,6 +239,7 @@ class XPUDPAPI(API):
                         if value < 0.0 and value > -0.001:
                             value = 0.0
                         retvalues[self.datarefs[idx]] = value
+                        self.execute_callbacks(dataref=self.datarefs[idx], value=value)
             self.xplaneValues.update(retvalues)
         except:
             raise XPlaneTimeout
