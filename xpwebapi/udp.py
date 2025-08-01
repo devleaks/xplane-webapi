@@ -1,6 +1,5 @@
-# Class to get dataref values from XPlane Flight Simulator via network.
-# License: GPLv3
-
+"""X-Plane access through UDP messages
+"""
 import socket
 import struct
 import binascii

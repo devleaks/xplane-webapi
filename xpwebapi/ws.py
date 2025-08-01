@@ -1,3 +1,5 @@
+"""X-Plane Web API access through Websocket API
+"""
 from __future__ import annotations
 
 import socket

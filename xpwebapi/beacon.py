@@ -172,12 +172,17 @@ class XPBeaconMonitor:
 
     @property
     def status(self) -> BEACON_MONITOR_STATUS:
-        """Should use REST API for some purpose"""
+        """Report beacon monitor status
+
+        returns:
+
+            BEACON_MONITOR_STATUS: Monitor status
+        """
         return self._status
 
     @property
     def status_str(self) -> str:
-        """Should use REST API for some purpose"""
+        """Report beacon monitor status as a string"""
         return f"{BEACON_MONITOR_STATUS(self._status).name}"
 
     @status.setter

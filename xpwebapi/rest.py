@@ -1,3 +1,5 @@
+"""X-Plane Web API access through REST API
+"""
 import logging
 import base64
 from datetime import timedelta

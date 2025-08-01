@@ -1,3 +1,5 @@
+"""Abstract base classes and core classes like Dataref and Command.
+"""
 from __future__ import annotations
 
 import logging
@@ -173,16 +175,17 @@ class API(ABC):
 
     @property
     def status(self) -> CONNECTION_STATUS:
-        """Should use REST API for some purpose"""
+        """Connection status"""
         return self._status
 
     @property
     def status_str(self) -> str:
-        """Should use REST API for some purpose"""
+        """Connection status as a string"""
         return f"{CONNECTION_STATUS(self._status).name}"
 
     @status.setter
     def status(self, status: CONNECTION_STATUS):
+        """Change connection status and reports it"""
         if self._status != status:
             self._status = status
             logger.info(f"API status is now {self.status_str}")
