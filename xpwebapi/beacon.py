@@ -16,7 +16,7 @@ import socket
 import struct
 import binascii
 import platform
-from typing import Callable, List, Set
+from typing import Callable, List, Set, Annotated
 from enum import Enum, IntEnum
 from datetime import datetime
 from dataclasses import dataclass
@@ -65,11 +65,11 @@ class BeaconData:
 class BEACON_DATA(Enum):
     """X-Plane names of attributes inside its beacon."""
 
-    IP = "IP"
-    PORT = "Port"
-    HOSTNAME = "hostname"
-    XPVERSION = "XPlaneVersion"
-    XPROLE = "role"
+    IP: Annotated(str, "X-Plane host IP address") = "IP"
+    PORT: Annotated(str, "X-Plane instance UDP port") = "Port"
+    HOSTNAMET: Annotated(str, "X-Plane instance IP host name") = "hostname"
+    XPVERSIONT: Annotated(str, "X-Plane instance version") = "XPlaneVersion"
+    XPROLET: Annotated(str, "X-Plane instance role") = "role"
 
 
 class BEACON_MONITOR_STATUS(IntEnum):
