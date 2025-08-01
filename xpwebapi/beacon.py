@@ -16,7 +16,7 @@ import socket
 import struct
 import binascii
 import platform
-from typing import Callable, List, Set, Annotated
+from typing import Callable, List, Set
 from enum import Enum, IntEnum
 from datetime import datetime
 from dataclasses import dataclass
@@ -55,21 +55,21 @@ def list_my_ips() -> List[str]:
 class BeaconData:
     """Pythonic dataclass to host X-Plane Beacon data."""
 
-    host: str
+    host: str  # IP address of X-Plane host
     port: int  # this is the UDP port, not the TCP API port
-    hostname: str
-    xplane_version: int
-    role: int  # 1 for master, 2 for extern visual, 3 for IOS
+    hostname: str  # hostname of X-Plane host
+    xplane_version: int  # X-Plane version running
+    role: int  # X-Plane instance role, 1 for master, 2 for extern visual, 3 for IOS
 
 
 class BEACON_DATA(Enum):
     """X-Plane names of attributes inside its beacon."""
 
-    IP: Annotated[str, "X-Plane host IP address"] = "IP"
-    PORT: Annotated[str, "X-Plane instance UDP port"] = "Port"
-    HOSTNAMET: Annotated[str, "X-Plane instance IP host name"] = "hostname"
-    XPVERSIONT: Annotated[str, "X-Plane instance version"] = "XPlaneVersion"
-    XPROLET: Annotated[str, "X-Plane instance role"] = "role"
+    IP = "IP"  # IP address of X-Plane host
+    PORT = "Port"  # UDP port (not the TCP API port)
+    HOSTNAME = "hostname"  # hostname of X-Plane host
+    XPVERSION = "XPlaneVersion"  # X-Plane version running
+    XPROLE = "role" #  X-Plane instance role, 1 for master, 2 for extern visual, 3 for IOS
 
 
 class BEACON_MONITOR_STATUS(IntEnum):

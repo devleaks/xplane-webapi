@@ -8,6 +8,8 @@ and a set of optional dataref.
 
 Dataref values get saved every WRITE_FREQUENCY and written FLUSH_FREQUENCY second.
 
+Currently use Websocket API. TO do: Use alternate protocols: REST, UDP. Should work out of the box.
+
 """
 
 import os
