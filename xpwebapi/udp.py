@@ -1,4 +1,10 @@
 """X-Plane access through UDP messages
+
+UDP interface is limited to
+  1. Asking for dataref values, one at a time, returned as a float number.
+  2. Setting single dataref value in simulator ("write").
+  3. Asking for execution of a command.
+
 """
 import socket
 import struct
