@@ -65,11 +65,11 @@ class BeaconData:
 class BEACON_DATA(Enum):
     """X-Plane names of attributes inside its beacon."""
 
-    IP: Annotated(str, "X-Plane host IP address") = "IP"
-    PORT: Annotated(str, "X-Plane instance UDP port") = "Port"
-    HOSTNAMET: Annotated(str, "X-Plane instance IP host name") = "hostname"
-    XPVERSIONT: Annotated(str, "X-Plane instance version") = "XPlaneVersion"
-    XPROLET: Annotated(str, "X-Plane instance role") = "role"
+    IP: Annotated[str, "X-Plane host IP address"] = "IP"
+    PORT: Annotated[str, "X-Plane instance UDP port"] = "Port"
+    HOSTNAMET: Annotated[str, "X-Plane instance IP host name"] = "hostname"
+    XPVERSIONT: Annotated[str, "X-Plane instance version"] = "XPlaneVersion"
+    XPROLET: Annotated[str, "X-Plane instance role"] = "role"
 
 
 class BEACON_MONITOR_STATUS(IntEnum):
