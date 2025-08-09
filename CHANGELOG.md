@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## 3.2.0 - 2025-08-09
+
+Breaking change, `api.execute()` is now more explicitely `api.execute_command()`.
+
 ## 3.1.0 - 2025-07-31
 
 Added callback to UDP dataref monitoring, like other rest and/or websocket API. Wow.

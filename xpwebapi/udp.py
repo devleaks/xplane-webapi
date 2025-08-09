@@ -133,7 +133,7 @@ class XPUDPAPI(API):
             return dataref.value
         return None
 
-    def execute(self, command: Command, duration: float = 0.0) -> bool | int:
+    def execute_command(self, command: Command, duration: float = 0.0) -> bool | int:
         """Execute command
 
         Args:

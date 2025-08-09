@@ -1008,7 +1008,11 @@ class XPWebsocketAPI(XPRestAPI):
         """
         return self.register_command_is_active_event(path=command.path, on=False)
 
-    def execute(self, command: Command, duration: float = 0.0) -> bool | int:
+    # def execute(self, command: Command, duration: float = 0.0) -> bool | int:
+    #     # deprecated, name is too common, too simple
+    #     return self.execute_command(command=command, duration=duration)
+
+    def execute_command(self, command: Command, duration: float = 0.0) -> bool | int:
         """Execute command in simulator.
 
         Execution is done through REST API if use_rest is True, or Websocket API if use_rest is False and Websocket is opened.
@@ -1021,5 +1025,5 @@ class XPWebsocketAPI(XPRestAPI):
             request id if succeeded
         """
         if self.use_rest:
-            return super().execute(command=command, duration=duration)
+            return super().execute_command(command=command, duration=duration)
         return self.set_command_is_active_with_duration(path=command.path, duration=duration)

@@ -298,7 +298,7 @@ class API(ABC):
         return False
 
     @abstractmethod
-    def execute(self, command: Command, duration: float = 0.0) -> bool | int:
+    def execute_command(self, command: Command, duration: float = 0.0) -> bool | int:
         """Execute command
 
         Args:
@@ -751,7 +751,7 @@ class Command:
 
     def execute(self, duration: float = 0.0) -> bool:
         """Execute command through API supplied at creation"""
-        return self.api.execute(command=self, duration=duration)
+        return self.api.execute_command(command=self, duration=duration)
 
     def monitor(self, on: bool = True) -> bool:
         """Monitor command activation through Websocket API"""

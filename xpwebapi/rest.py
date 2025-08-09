@@ -386,7 +386,7 @@ class XPRestAPI(API):
         logger.error(f"rest_write: {response} {response.reason} {response.text}")
         return False
 
-    def execute(self, command: Command, duration: float = 0.0) -> bool | int:
+    def execute_command(self, command: Command, duration: float = 0.0) -> bool | int:
         """Executes Command through REST API
 
         Returns:
