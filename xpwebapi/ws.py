@@ -10,7 +10,7 @@ import time
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Optional, Callable
 from enum import Enum
 
 # Packaging is used in Cockpit to check driver versions
@@ -20,6 +20,7 @@ from simple_websocket import Client, ConnectionClosed
 
 from .api import CONNECTION_STATUS, DATAREF_DATATYPE, webapi_logger, Dataref, Command
 from .rest import REST_KW, XPRestAPI
+from .beacon import BeaconData
 
 # local logging
 logger = logging.getLogger(__name__)
@@ -57,9 +58,13 @@ class Request:
 
     r_id: int  # Request id
     body: dict  # Request body
-    success: bool | None  # sucess of request, None if no feedback yet
-    error: str | None # error message, if any
+    ts: datetime  # timestamp of submission
+    ts_ack: Optional[datetime] = None  # timestamp of reception
+    success: Optional[bool] = None  # sucess of request, None if no feedback yet
+    error: Optional[str] = None # error message, if any
 
+def now() -> datetime:
+    return datetime.now().astimezone()
 
 
 # #############################################
@@ -164,7 +169,7 @@ class XPWebsocketAPI(XPRestAPI):
     # ################################
     # Connection to web socket
     #
-    def beacon_callback(self, connected: bool, beacon_data: "BeaconData", same_host: bool):
+    def beacon_callback(self, connected: bool, beacon_data: BeaconData, same_host: bool):
         """Callback waits a little bit before shutting down websocket handler on beacon miss.
            Starts or make sure it is running on beacon hit.
 
@@ -303,10 +308,10 @@ class XPWebsocketAPI(XPRestAPI):
                                 self.ws_lsnr_not_running.set()
 
                         if number_of_timeouts >= MAX_TIMEOUT_COUNT and to_count % WARN_FREQ == 0:
-                            logger.error(f"..X-Plane instance not found on local network.. ({datetime.now().strftime('%H:%M:%S')})")
+                            logger.error(f"..X-Plane instance not found on local network.. ({now().strftime('%H:%M:%S')})")
                         to_count = to_count + 1
                 except:
-                    logger.error(f"..X-Plane instance not found on local network.. ({datetime.now().strftime('%H:%M:%S')})", exc_info=True)
+                    logger.error(f"..X-Plane instance not found on local network.. ({now().strftime('%H:%M:%S')})", exc_info=True)
                 # If still no connection (above attempt failed)
                 # we wait before trying again
                 if not self.connected:
@@ -349,9 +354,10 @@ class XPWebsocketAPI(XPRestAPI):
             self.should_not_connect.set()  # first stop the connection monitor.
             wait = self.RECONNECT_TIMEOUT  # If we close the connection first, it might be reopened by the connection monitor
             logger.debug(f"..asked to stop connection monitor.. (this may last {wait} secs.)")
-            self.connect_thread.join(timeout=wait)
-            if self.connect_thread.is_alive():
-                logger.warning("..thread may hang..")
+            if self.connect_thread is not None:
+                self.connect_thread.join(timeout=wait)
+                if self.connect_thread.is_alive():
+                    logger.warning("..thread may hang..")
             self.disconnect_websocket(silent=True)  # then we close the websocket
             logger.debug("..disconnected")
         else:
@@ -384,7 +390,7 @@ class XPWebsocketAPI(XPRestAPI):
             return False
         req_id = self.next_req
         payload[REST_KW.REQID.value] = req_id
-        self._requests[req_id] = None  # may be should remember timestamp, etc. if necessary, create Request class.
+        self._requests[req_id] = Request(r_id=req_id, body=payload, ts=now())
         self.ws.send(json.dumps(payload))
         webapi_logger.info(f">>SENT {payload}")
         if len(mapping) > 0:
@@ -616,7 +622,7 @@ class XPWebsocketAPI(XPRestAPI):
         to_count = 0
         TO_COUNT_DEBUG = 10
         TO_COUNT_INFO = 50
-        start_time = datetime.now()
+        start_time = now()
         last_read_ts = start_time
         total_read_time = 0.0
 
@@ -629,25 +635,25 @@ class XPWebsocketAPI(XPRestAPI):
                 # probably we don't receive messages because X-Plane has nothing to send...
                 if message is None:
                     if to_count % TO_COUNT_INFO == 0:
-                        logger.debug(f"..receive timeout ({self.RECEIVE_TIMEOUT} secs.), waiting for response from simulator..")  # at {datetime.now()}")
+                        logger.debug(f"..receive timeout ({self.RECEIVE_TIMEOUT} secs.), waiting for response from simulator..")  # at {now()}")
                     elif to_count % TO_COUNT_DEBUG == 0:
-                        logger.debug(f"..receive timeout ({self.RECEIVE_TIMEOUT} secs.), waiting for response from simulator..")  # at {datetime.now()}")
+                        logger.debug(f"..receive timeout ({self.RECEIVE_TIMEOUT} secs.), waiting for response from simulator..")  # at {now()}")
                     to_count = to_count + 1
                     continue
 
-                now = datetime.now()
+                lnow = now()
                 if total_reads == 0:
-                    logger.info(f"..first message at {now.replace(microsecond=0)} ({round((now - start_time).seconds, 2)} secs.).. {'<'*attention}")
+                    logger.info(f"..first message at {lnow.replace(microsecond=0)} ({round((lnow - start_time).seconds, 2)} secs.).. {'<'*attention}")
                     self.status = CONNECTION_STATUS.RECEIVING_DATA
                     self.RECEIVE_TIMEOUT = 5  # when connected, check less often, message will arrive
 
                 if to_count > 0:
-                    logger.debug(f"..receive ok..")
+                    logger.debug("..receive ok..")
                     to_count = 0
                 total_reads = total_reads + 1
-                delta = now - last_read_ts
+                delta = lnow - last_read_ts
                 total_read_time = total_read_time + delta.microseconds / 1000000
-                last_read_ts = now
+                last_read_ts = lnow
 
                 # Decode response
                 data = {}
@@ -662,7 +668,11 @@ class XPWebsocketAPI(XPRestAPI):
                         webapi_logger.info(f"<<RCV  {data}")
                         req_id = data.get(REST_KW.REQID.value)
                         if req_id is not None:
-                            self._requests[req_id] = data.get(REST_KW.SUCCESS.value)
+                            self._requests[req_id].ts_ack = lnow
+                            success = data.get(REST_KW.SUCCESS.value)
+                            self._requests[req_id].success = success
+                            if not success:
+                                self._requests[req_id].error = data.get(REST_KW.ERROR_MESSAGE.value)
                             self.execute_callbacks(CALLBACK_TYPE.ON_REQUEST_FEEDBACK, request_id=req_id, payload=data)
                     #
                     #

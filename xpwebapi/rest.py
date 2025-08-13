@@ -36,6 +36,8 @@ class REST_KW(Enum):
     DATAREFS = "datarefs"
     DESCRIPTION = "description"
     DURATION = "duration"
+    ERROR_MESSAGE = "error_message"
+    ERROR_CODE = "error_code"
     IDENT = "id"
     INDEX = "index"
     ISACTIVE = "is_active"
