@@ -8,6 +8,7 @@ import logging
 import json
 import time
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Tuple, Dict
 from enum import Enum
@@ -49,6 +50,16 @@ class CALLBACK_TYPE(Enum):
     ON_COMMAND_ACTIVE = "command_active"
     AFTER_START = "after_start"
     BEFORE_STOP = "before_stop"
+
+@dataclass
+class Request:
+    """Pythonic dataclass to host X-Plane Beacon data."""
+
+    r_id: int  # Request id
+    body: dict  # Request body
+    success: bool | None  # sucess of request, None if no feedback yet
+    error: str | None # error message, if any
+
 
 
 # #############################################
