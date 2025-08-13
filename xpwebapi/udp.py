@@ -14,7 +14,7 @@ import threading
 from time import sleep
 from typing import Tuple, Dict, Callable
 
-from .api import API, DatarefValueType, Dataref, Command
+from .api import API, CONNECTION_STATUS, DatarefValueType, Dataref, Command
 
 # local logging
 logger = logging.getLogger(__name__)
@@ -218,9 +218,13 @@ class XPUDPAPI(API):
         Raises:
             XPlaneTimeout: [description]
         """
+        if self.status not in [CONNECTION_STATUS.LISTENING_FOR_DATA, CONNECTION_STATUS.RECEIVING_DATA]:
+            self.status = CONNECTION_STATUS.LISTENING_FOR_DATA
         try:
             # Receive packet
             data, addr = self.socket.recvfrom(1472)  # maximum bytes of an RREF answer X-Plane will send (Ethernet MTU - IP hdr - UDP hdr)
+            if self.status != CONNECTION_STATUS.RECEIVING_DATA:
+                self.status = CONNECTION_STATUS.RECEIVING_DATA
             # Decode Packet
             retvalues = {}
             # * Read the Header "RREFO".
@@ -244,6 +248,8 @@ class XPUDPAPI(API):
                         self.execute_callbacks(dataref=self.datarefs[idx], value=value)
             self.xplaneValues.update(retvalues)
         except:
+            if self.status != CONNECTION_STATUS.LISTENING_FOR_DATA:
+                self.status = CONNECTION_STATUS.LISTENING_FOR_DATA
             raise XPlaneTimeout
         return self.xplaneValues
 
@@ -254,6 +260,7 @@ class XPUDPAPI(API):
     def udp_listener(self):
         logger.info("starting udp listener..")
 
+        self.status = CONNECTION_STATUS.UDP_LISTENER_RUNNING
         while self.udp_listener_running:
             try:
                 data = self.read_monitored_dataref_values()

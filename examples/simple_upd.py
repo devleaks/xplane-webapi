@@ -1,7 +1,6 @@
 import os
 import sys
 import logging
-import time
 from typing import Any
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
@@ -19,9 +18,8 @@ def dataref_monitor(dataref: str, value: Any):
 # UDP API
 beacon = xpwebapi.beacon()
 beacon.start_monitor()
-while not beacon.receiving_beacon:
-    print("waiting for beacon")
-    time.sleep(2)
+beacon.wait_for_beacon(report=True)  # blocks until beacon is detected
+
 xp = xpwebapi.udp_api(beacon=beacon)
 
 xp.add_callback(callback=dataref_monitor)

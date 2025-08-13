@@ -16,6 +16,7 @@ import socket
 import struct
 import binascii
 import platform
+import time
 from typing import Callable, List, Set
 from enum import Enum, IntEnum
 from datetime import datetime
@@ -443,6 +444,12 @@ class XPBeaconMonitor:
             else:
                 logger.debug("..monitor not running")
         self.status = BEACON_MONITOR_STATUS.NOT_RUNNING
+
+    def wait_for_beacon(self, report: bool = False, retry: int = 2):
+        while not self.receiving_beacon:
+            if report:
+                logger.info("waiting for beacon..")
+            time.sleep(retry)
 
 
 # ######################################
