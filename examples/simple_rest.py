@@ -4,7 +4,6 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 import logging
-from typing import Any
 
 import xpwebapi
 
