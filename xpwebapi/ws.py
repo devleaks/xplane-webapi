@@ -1,5 +1,6 @@
 """X-Plane Web API access through Websocket API
 """
+
 from __future__ import annotations
 
 import socket
@@ -52,6 +53,7 @@ class CALLBACK_TYPE(Enum):
     AFTER_START = "after_start"
     BEFORE_STOP = "before_stop"
 
+
 @dataclass
 class Request:
     """Pythonic dataclass to host X-Plane Beacon data."""
@@ -61,7 +63,8 @@ class Request:
     ts: datetime  # timestamp of submission
     ts_ack: Optional[datetime] = None  # timestamp of reception
     success: Optional[bool] = None  # sucess of request, None if no feedback yet
-    error: Optional[str] = None # error message, if any
+    error: Optional[str] = None  # error message, if any
+
 
 def now() -> datetime:
     return datetime.now().astimezone()

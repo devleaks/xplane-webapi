@@ -6,15 +6,20 @@ UDP interface is limited to
   3. Asking for execution of a command.
 
 """
+
 import socket
 import struct
 import binascii
 import logging
 import threading
+import platform
+
 from time import sleep
 from typing import Tuple, Dict, Callable
 
 from .api import API, CONNECTION_STATUS, DatarefValueType, Dataref, Command
+from .beacon import BeaconData, BEACON_TIMEOUT
+from xpwebapi import beacon
 
 # local logging
 logger = logging.getLogger(__name__)
@@ -34,21 +39,32 @@ class XPUDPAPI(API):
     def __init__(self, **kwargs):
         # Prepare a UDP Socket to read/write to X-Plane
         self.beacon = kwargs.get("beacon")
+
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.settimeout(10.0)
+
         #
         self.callbacks = set()
+
         # list of requested datarefs with index number
         self.datarefidx = 0
         self.datarefs = {}  # key = idx, value = dataref
         # values from xplane
         self.xplaneValues = {}
         self.defaultFreq = 1
+
         #
         self.udp_lsnr_not_running = threading.Event()
         self.udp_lsnr_not_running.set()  # means it is off
         self.udp_thread = None
-        API.__init__(self, host="127.0.0.1", port=49000, api="", api_version="")
+
+        host = kwargs.get("host", "127.0.0.1")
+        port = kwargs.get("port", 49000)
+
+        API.__init__(self, host=host, port=port, api="", api_version="")  # api, api_version unused, but could be compared to xplane_version_number
+
+        if self.beacon is not None:
+            self.beacon.add_callback(self.beacon_callback)  # can only add after API.__init__() call since it creates class attributes
 
     def __del__(self):
         for i in range(len(self.datarefs)):
@@ -58,7 +74,62 @@ class XPUDPAPI(API):
     @property
     def connected(self) -> bool:
         """Whether X-Plane API is reachable through this API"""
+        if self.beacon is None:  # probes...
+            return self.simple_connection_probe()
         return False if self.beacon.data is None else self.beacon.data.host is not None
+
+    def simple_connection_probe(self) -> bool:
+        """Exeprimental
+
+        Do we receive a UPD message within TIMEOUT seconds?
+
+        returns:
+
+        (bool) UPD message recieved
+
+        """
+        MCAST_GRP = "239.255.1.1"  # XPBeaconMonitor.MCAST_GRP
+        MCAST_PORT = 49707  # XPBeaconMonitor.MCAST_PORT
+
+        logger.warning("no beacon monitor, cannot test connection")
+        socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # open socket for multicast group.
+        # this socker is for getting the beacon, it can be closed when beacon is found.
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)  # SO_REUSEPORT?
+        if platform.system() == "Windows":
+            sock.bind(("", MCAST_PORT))
+        else:
+            sock.bind((MCAST_GRP, MCAST_PORT))
+        mreq = struct.pack("=4sl", socket.inet_aton(MCAST_GRP), socket.INADDR_ANY)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+        sock.settimeout(BEACON_TIMEOUT)
+
+        connected = False
+        try:
+            packet, sender = sock.recvfrom(1472)  # blocks TIMEOUT secs.
+            # read something, must be up
+            connected = True
+
+        except socket.timeout:  # nothing within TIMEOUT secs
+            connected = False
+        finally:
+            sock.close()
+        return connected
+
+    def beacon_callback(self, connected: bool, beacon_data: BeaconData, same_host: bool):
+        """Callback waits a little bit before shutting down websocket handler on beacon miss.
+           Starts or make sure it is running on beacon hit.
+
+        Args:
+            connected (bool): Whether beacon is received
+            beacon_data (BeaconData): Beacon data
+            same_host (bool): Whether beacon is issued from same host as host running the monitor
+        """
+        if connected:
+            if beacon_data is not None and beacon_data.host is not None:
+                logger.debug("beacon detected")
+                self.set_network(host=beacon_data.host, port=beacon_data.port, api="", api_version="")
 
     def add_callback(self, callback: Callable):
         """Add callback function to set of callback functions
@@ -115,10 +186,10 @@ class XPUDPAPI(API):
             message = struct.pack("<5sI500s", cmd, int(dataref.value), string)
 
         assert len(message) == 509
-        self.socket.sendto(message, (self.beacon.data.host, self.beacon.data.port))
+        self.socket.sendto(message, (self.host, self.port))
         return True
 
-    def dataref_value(self, dataref: Dataref) -> DatarefValueType:
+    def dataref_value(self, dataref: Dataref) -> DatarefValueType | None:
         """Returns Dataref value from simulator
 
         Args:
@@ -138,6 +209,18 @@ class XPUDPAPI(API):
 
         Args:
             command (Command): Command to execute
+            duration (float): Duration of execution for long commands (default: `0.0`)
+
+        Returns:
+            bool: [description]
+        """
+        return self._execute_command(command.path)
+
+    def _execute_command(self, command: str) -> bool:
+        """Execute command
+
+        Args:
+            command (str): Command to execute
             duration (float): Duration of execution for long commands (default: `0.0`)
 
         Returns:
@@ -201,7 +284,7 @@ class XPUDPAPI(API):
         string = dataref.encode()
         message = struct.pack("<5sii400s", cmd, freq, idx, string)
         assert len(message) == 413
-        self.socket.sendto(message, (self.beacon.data.host, self.beacon.data.port))
+        self.socket.sendto(message, (self.host, self.port))
         if self.datarefidx % 100 == 0:
             sleep(0.2)
         return True
@@ -302,5 +385,3 @@ class XPUDPAPI(API):
                 logger.info("..udp listener stopped")
         else:
             logger.debug("udp listener not running")
-
-

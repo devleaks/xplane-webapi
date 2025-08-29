@@ -70,7 +70,7 @@ class BEACON_DATA(Enum):
     PORT = "Port"  # UDP port (not the TCP API port)
     HOSTNAME = "hostname"  # hostname of X-Plane host
     XPVERSION = "XPlaneVersion"  # X-Plane version running
-    XPROLE = "role" #  X-Plane instance role, 1 for master, 2 for extern visual, 3 for IOS
+    XPROLE = "role"  #  X-Plane instance role, 1 for master, 2 for extern visual, 3 for IOS
 
 
 class BEACON_MONITOR_STATUS(IntEnum):
@@ -445,10 +445,15 @@ class XPBeaconMonitor:
                 logger.debug("..monitor not running")
         self.status = BEACON_MONITOR_STATUS.NOT_RUNNING
 
-    def wait_for_beacon(self, report: bool = False, retry: int = 2):
+    def wait_for_beacon(self, report: bool = False, retry: int = 2, max_warning: int = 10):
+        warnings = 0
         while not self.receiving_beacon:
-            if report:
-                logger.info("waiting for beacon..")
+            if report and warnings <= max_warning:
+                if warnings == max_warning:
+                    logger.warning("waiting for beacon.. (last warning)")
+                else:
+                    logger.warning("waiting for beacon..")
+                warnings = warnings + 1
             time.sleep(retry)
 
 

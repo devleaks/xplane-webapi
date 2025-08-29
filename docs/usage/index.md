@@ -80,15 +80,16 @@ def dataref_monitor(dataref: str, value: Any):
 # UDP API
 beacon = xpwebapi.beacon()
 beacon.start_monitor()
-while not beacon.receiving_beacon:
-    print("waiting for beacon..")
-    time.sleep(2)
+beacon.wait_for_beacon()
 
 xp = xpwebapi.udp_api(beacon=beacon)
 
 # In the case of UDP, there are no different types of callbacks
 # just for dataref value changes
 xp.add_callback(callback=dataref_monitor)
+
+mapview = xp.command("sim/map/show_current")
+xp.execute_command(mapview)
 
 xp.monitor_dataref(xp.dataref(path="sim/flightmodel/position/indicated_airspeed"))
 xp.monitor_dataref(xp.dataref(path="sim/flightmodel/position/latitude"))
