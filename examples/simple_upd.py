@@ -15,6 +15,7 @@ logging.basicConfig(level=logging.INFO, format=FORMAT, datefmt="%H:%M:%S")
 def dataref_monitor(dataref: str, value: Any):
     print(f"{dataref}={value}")
 
+
 # UDP API
 beacon = xpwebapi.beacon()
 beacon.start_monitor()

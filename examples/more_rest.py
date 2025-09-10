@@ -14,7 +14,9 @@ logging.basicConfig(level=logging.INFO, format=FORMAT, datefmt="%H:%M:%S")
 
 print("xpwebapi version", xpwebapi.version)
 
-api = xpwebapi.rest_api(host="192.168.1.140", port=8080, api_version="v2")  # defaults: host="127.0.0.1", port=8086, api="/api", api_version="v1", use_cache=False
+api = xpwebapi.rest_api(
+    host="192.168.1.140", port=8080, api_version="v2"
+)  # defaults: host="127.0.0.1", port=8086, api="/api", api_version="v1", use_cache=False
 
 # options: no_cache, version
 
