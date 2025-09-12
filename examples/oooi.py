@@ -7,9 +7,8 @@ import logging
 import os
 import sys
 from datetime import datetime, timedelta, timezone
-from time import ctime
 from enum import Enum, StrEnum
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -24,32 +23,16 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+version = "1.0.0"
+
+
 class DREFS(StrEnum):
     GROUND_SPEED = "sim/flightmodel2/position/groundspeed"
     AGL = "sim/flightmodel/position/y_agl"
     TRACKING = "sim/cockpit2/gauges/indicators/ground_track_mag_pilot"  # The ground track of the aircraft in degrees magnetic
     HEADING = "sim/cockpit2/gauges/indicators/compass_heading_deg_mag"  # Indicated heading of the wet compass, in degrees.
-
-LANDING_EVALUATION_DATAREFS = {
-    "sim/aircraft/view/acf_ICAO",
-    "sim/aircraft/view/acf_tailnum",
-    "sim/flightmodel/forces/fnrml_gear",
-    "sim/flightmodel/position/elevation",
-    "sim/flightmodel/position/indicated_airspeed",
-    "sim/flightmodel/position/latitude",
-    "sim/flightmodel/position/local_vy",
-    "sim/flightmodel/position/longitude",
-    "sim/flightmodel/position/y_agl",
-    "sim/flightmodel2/gear/tire_vertical_deflection_mtr",
-    "sim/flightmodel2/position/true_phi",
-    "sim/flightmodel2/position/true_psi",
-    "sim/flightmodel2/position/true_theta",
-    "sim/time/total_flight_time_sec",
-    # ToLiss specifics
-    "AirbusFBW/GearStrutCompressDist_m",
-    "AirbusFBW/IASCapt",
-    "toliss_airbus/pfdoutputs/general/VLS_value",
-}
+    DAYS = "sim/time/local_date_days"
+    ZULU_SECS = "sim/time/zulu_time_sec"
 
 
 class OOOI(Enum):
@@ -77,14 +60,15 @@ STOPPED_SPEED_MARGIN = 0.1
 TAXI_SPEED_MARGIN = 20  # 11m/s = 40 km/h
 ROLL_SPEED_MARGIN = 50  # 50m/s = 97knt
 AIR_SPEED_MARGIN = 50  # 72m/s = 140knt, should be in air...
-ALT_MARGIN = 20  # ft
-ALT_THRESHOLD_UP = 30
-ALT_THRESHOLD_DOWN = 10
+ALT_MARGIN = 5  # meters, significant altitude difference, we're climbing/descending
+ALT_THRESHOLD_UP = 30  # above that AGL, we're taking off
+ALT_THRESHOLD_DOWN = 10  # below that AGL, we're landing
 MIN_FLIGHT_TIME = 120
 AIR_AGL_MARGIN = 30  # meters
 HOLD_MAX_TIME = 300  # secs, 5 minutes
-ALWAYS_FOUR = False  # show always 4 values like EBCI/EBBR OUT/1644 OFF/---- ON/---- IN/----
-ETA_REMINDER = 600 # secs, 10 minutes
+ALWAYS_FOUR = False  # show always 4 values like EBCI/EBBR OUT/1644 OFF/---- ON/---- IN/---- [ETA/nnnn]
+ETA_REMINDER = 600  # secs, 10 minutes
+
 
 def now() -> datetime:
     return datetime.now(timezone.utc)
@@ -119,7 +103,6 @@ class OOOIManager:
 
         # debug
         self._onblock = False
-        self.cnt = 0
 
         self.ws.add_callback(cbtype=xpwebapi.CALLBACK_TYPE.ON_DATAREF_UPDATE, callback=self.dataref_changed)
 
@@ -134,23 +117,13 @@ class OOOIManager:
         return self.current_oooi
 
     @oooi.setter
-    def oooi(self, report: OOOI):
-        if self.current_state == report:
-            return  # no change
-        self.current_oooi = report
-        # self.all_oooi[report] = now()
+    def oooi(self, report: OOOI | Tuple[OOOI, datetime]):
+        # Changes OOOI and set timestamp to supplied value if any
+        newoooi = report if type(report) is OOOI else report[0]
+        if self.current_oooi is None or self.current_oooi != newoooi:
+            self.current_oooi = newoooi
+            self.all_oooi[newoooi] = now() if type(report) is OOOI else report[1]
         self.report()
-
-    def change_oooi(self, oooi: OOOI, ts: datetime | None = None):
-        if ts is None:
-            ts = now()
-        self.all_oooi[oooi] = ts
-        if self.oooi is None or self.oooi != oooi:
-            self.oooi = oooi
-            # self.show_values(str(oooi))
-            self.report()
-        else:
-            logger.warning("change to same value?")
 
     def no_value(self, oooi: OOOI):
         self.all_oooi[oooi] = EPOCH
@@ -192,8 +165,8 @@ class OOOIManager:
 
     @property
     def sim_time(self) -> datetime:
-        days = self.dataref_value("sim/time/local_date_days")
-        secs = self.dataref_value("sim/time/zulu_time_sec")
+        days = self.dataref_value(DREFS.DAYS)
+        secs = self.dataref_value(DREFS.ZULU_SECS)
         return datetime.now(timezone.utc).replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0) + timedelta(days=days, seconds=secs)
 
     def report(self, display: bool = True) -> str:
@@ -229,18 +202,16 @@ class OOOIManager:
             if self.all_oooi.get(OOOI.IN) is not None:
                 report = report + f" IN/{pt(self.all_oooi.get(OOOI.IN))}"
             else:
+                report = report + " IN/----"
                 if self.eta is not None and self.eta > self.all_oooi.get(OOOI.ON):  # ETA after landing might be ETA "at the gate"
                     report = report + f" ETA/{pt(self.eta)}"
-                else:
-                    report = report + " IN/----"
         else:
-            if self.eta is not None:
-                report = report + f" ETA/{pt(self.eta)}"
-            else:
-                if not off_set or ALWAYS_FOUR:
-                    report = report + " ON/----"
+            if not off_set or ALWAYS_FOUR:
+                report = report + " ON/----"
                 if ALWAYS_FOUR:
                     report = report + " IN/----"
+            if self.eta is not None:
+                report = report + f" ETA/{pt(self.eta)}"
         if display:
             logger.info(report)
         return report
@@ -277,7 +248,7 @@ class OOOIManager:
             logger.debug("no off-block time, no take-off time")
             self.no_value(OOOI.OUT)
             self.no_value(OOOI.OFF)
-            self.change_oooi(OOOI.OFF, EPOCH)
+            self.oooi = (OOOI.OFF, EPOCH)
             self.show_values(f"..initialized ({self.current_state})", first=True)
             return
         else:  # 2. We are on the ground.
@@ -296,7 +267,7 @@ class OOOIManager:
                 logger.debug("we are taxiing")
                 self.current_state = PHASE.TAXI_OUT
                 logger.debug(f"speed {round(speed, 2)} < {TAXI_SPEED_MARGIN}, assuming {PHASE.TAXI_OUT.value}, no off-block time")
-                self.change_oooi(OOOI.OUT, EPOCH)
+                self.oooi = (OOOI.OUT, EPOCH)
                 self.show_values(f"..initialized ({self.current_state})", first=True)
                 return
             if speed > ROLL_SPEED_MARGIN:
@@ -305,13 +276,13 @@ class OOOIManager:
                     if self.speed_trend > 0:
                         self.current_state = PHASE.TAKEOFF_ROLL
                         logger.debug(f"speed {round(speed, 2)} > {ROLL_SPEED_MARGIN}, assuming {PHASE.TAKEOFF_ROLL.value}")
-                        self.change_oooi(OOOI.OUT, EPOCH)  # we're moving, but haven't taken off yet
+                        self.oooi = (OOOI.OUT, EPOCH)  # we're moving, but haven't taken off yet
                     elif self.speed_trend <= 0:
                         self.current_state = PHASE.LANDING_ROLL
                         logger.debug(f"speed {round(speed, 2)} > {ROLL_SPEED_MARGIN}, assuming {PHASE.LANDING_ROLL.value}")
                         self.no_value(OOOI.OUT)
                         self.no_value(OOOI.OFF)
-                        self.change_oooi(OOOI.ON)
+                        self.oooi = OOOI.ON
 
         self.show_values(f"..initialized ({self.current_state})", first=True)
 
@@ -359,7 +330,7 @@ class OOOIManager:
                 if self.oooi is None:
                     if speed > STOPPED_SPEED_MARGIN:  # we were ON_BLOCK, we are now moving... (may be strong wind?)
                         logger.debug("set state to OOOI.OUT")
-                        self.change_oooi(OOOI.OUT)
+                        self.oooi = OOOI.OUT
                     else:
                         if not self._onblock:
                             self._onblock = True
@@ -376,22 +347,12 @@ class OOOIManager:
 
         if self.oooi == OOOI.OUT:  # we no longer at the gate/parked
             if dataref == DREFS.AGL:
-                if self.cnt % 20:
-                    self.cnt = self.cnt + 1
-                    logger.debug("current state is OOOI.OUT")
-                alt_diff = alt - self.last.get(AGL)  # we took off, shoukd also check speed >> max_taxi_speed (~=60 km/h)
+                alt_diff = alt - self.last.get(DREFS.AGL)  # we took off, shoukd also check speed >> max_taxi_speed (~=60 km/h)
                 if alt_diff > ALT_THRESHOLD_UP or alt > ALT_THRESHOLD_UP:
                     logger.debug(f"we climb, we're OFF ({alt}, {alt_diff})")
-                    self.change_oooi(OOOI.OFF)
-                else:
-                    if self.cnt % 20:
-                        self.cnt = self.cnt + 1
-                        logger.debug(f"we're on the ground ({alt}, {alt_diff})")
+                    self.oooi = OOOI.OFF
             if dataref == DREFS.GROUND_SPEED:
                 if speed < STOPPED_SPEED_MARGIN:  # we're stopped, may be we were taxiing IN when we assumed we were taxiing out...
-                    if self.cnt % 20:
-                        self.cnt = self.cnt + 1
-                        logger.debug("current state is OOOI.OUT")
                     if self.how_long_waiting() < HOLD_MAX_TIME:
                         self.set_last_stop()
                         logger.debug(
@@ -401,20 +362,14 @@ class OOOIManager:
                         logger.info(
                             f"waiting more than {humanize.naturaltime(HOLD_MAX_TIME)}, assuming {PHASE.ON_BLOCK.value} {humanize.naturaldelta(HOLD_MAX_TIME)}, stopped since {self.last_stop}"
                         )
-                        self.change_oooi(OOOI.ON, self.last_stop)
+                        self.oooi = (OOOI.ON, self.last_stop)
                 else:
-                    if self.cnt % 20:
-                        self.cnt = self.cnt + 1
-                        logger.debug("we're taxiing out")
                     self.last_stop = None
 
         if self.oooi == OOOI.OFF:  # we're flying
             if dataref == DREFS.AGL:
                 alt = value
                 if alt < ALT_THRESHOLD_DOWN:
-                    if self.cnt % 20:
-                        self.cnt = self.cnt + 1
-                        logger.debug("we're lower than 30m, we're ON")
                     reftime = now()
                     takeoff_time = self.all_oooi.get(OOOI.OFF)
                     if takeoff_time is not None:
@@ -424,13 +379,10 @@ class OOOIManager:
                             logger.warning(f"we flew less than {MIN_FLIGHT_TIME} seconds, no ON time")
                     else:
                         logger.warning("no take off reference time, assuming we landed")
-                    self.change_oooi(OOOI.ON)
+                    self.oooi = OOOI.ON
 
         if self.oooi == OOOI.ON:  # We're back on the ground
             if dataref == DREFS.GROUND_SPEED:
-                if self.cnt % 20:
-                    self.cnt = self.cnt + 1
-                    logger.debug(f"current state is OOOI.ON ({dataref}={round(value, 1)})")
                 speed = value
                 if speed < STOPPED_SPEED_MARGIN:  # we're stopped
                     reftime = now()
@@ -440,10 +392,10 @@ class OOOIManager:
                         # are both engine off?
                         if taxi_time.seconds > HOLD_MAX_TIME:  # and self.both_engine_off():
                             logger.debug(f"we are stopped, we taxied in for {round(taxi_time.seconds)} secs., assuming we stopped at gate")
-                            self.change_oooi(OOOI.IN)
+                            self.oooi = OOOI.IN
                     else:
                         logger.warning("no landing reference time, assuming we stopped at gate")
-                        self.change_oooi(OOOI.IN)
+                        self.oooi = OOOI.IN
 
         if (now() - self.last_eta).seconds > ETA_REMINDER:  # display report every ETA_REMINDER to show 1. it's alive, 2. ETA has not changed
             self.report()
