@@ -1,6 +1,8 @@
 """ Creates KML 3D flight path for visualisation in Google Earth or alike: [description]
 """
+
 import simplekml
+
 
 def to_kml(path: list, airport: dict, name: str = "Flight Path", desc: str = "Landing Flight Path") -> str:
     # coords = [ts, lat, lon, alt]

@@ -64,17 +64,17 @@ HEADER = {
 #
 # They MUST BE the ZULU time, then the longitude, latitude, altitude in feet, magnetic heading in degrees, then pitch and roll in degrees.
 # Note: Not sure where to fetch temperature offset from ISA.
-FDR_DATA = {
+FDR_DATA = [
     "sim/cockpit2/clock_timer/zulu_time_hours",
     "sim/cockpit2/clock_timer/zulu_time_minutes",
     "sim/cockpit2/clock_timer/zulu_time_seconds",
     "sim/flightmodel/position/longitude",
     "sim/flightmodel/position/latitude",
-    "sim/cockpit/pressure/cabin_altitude_actual_ft",
+    "sim/flightmodel/position/elevation",
     "sim/cockpit2/gauges/indicators/heading_electric_deg_mag_pilot",
     "sim/cockpit2/gauges/indicators/pitch_electric_deg_pilot",
     "sim/cockpit2/gauges/indicators/roll_electric_deg_pilot",
-}
+]
 
 # Additional datarefs that user wants to be saved
 #
@@ -126,7 +126,7 @@ class FDR:
         ws.start()
 
     def get_dataref_names(self) -> set:
-        return HEADER | FDR_DATA | FDR_OPTIONAL
+        return HEADER | set(FDR_DATA) | set(FDR_OPTIONAL)
 
     def dataref_value(self, dataref: str, is_string: bool = False, rounding: int | None = None):
         dref = self.datarefs.get(dataref)
@@ -189,8 +189,10 @@ class FDR:
         logger.debug("FDR header written")
 
     def print_line(self) -> str:
-        base = datetime.datetime.now(datetime.UTC).strftime("%H:%M:%S.%f")
-        base = base + ", ".join([f"{self.dataref_value(d)}" for d in FDR_DATA if "zulu" not in d])
+        base = datetime.datetime.now(datetime.UTC).strftime("%H:%M:%S.%f, ")
+        values = [self.dataref_value(d) for d in FDR_DATA if "zulu" not in d]
+        values[2] = float(values[2]) * 3.28084
+        base = base + ", ".join([f"{v}" for v in values])
         optional = "" if len(self.optional_datarefs) == 0 else ", " + ", ".join([f"{self.dataref_value(d)}" for d in self.optional_datarefs.keys()])
         return base + optional + "\n"
 
@@ -239,7 +241,7 @@ class FDR:
 
 
 if __name__ == "__main__":
-    ws = xpwebapi.ws_api(host="192.168.1.141", port=8080)
+    ws = xpwebapi.ws_api() # host="192.168.1.141", port=8080)
     fdr = FDR(ws, frequency=1.0)
     try:
         fdr.start()

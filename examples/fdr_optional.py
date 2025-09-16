@@ -9,4 +9,4 @@ A warning is issued, no more. In case of warning, play back of FDR file may not 
 
 """
 
-FDR_OPTIONAL = {"sim/flightmodel/misc/g_total", "nonexistent/dataref"}
+FDR_OPTIONAL = []

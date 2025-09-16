@@ -4,7 +4,7 @@ Extrernal (to X-Plane) application to detect OOOI ACARS message changes and gene
 
 Notes:
 Runway where aircraft should land is called TARGET RUNWAY.
-Landing monitoring starts when aircraft below ALT_LOW (=150m AGL).
+Landing monitoring starts when aircraft below LOW_ALTITUDE (=150m AGL).
 Monitoring stops when ground speed < SPEED_SLOW (=15 m/S ~= 40km/h)
 
 """
@@ -15,118 +15,36 @@ import sys
 import math
 import csv
 import threading
+from dataclasses import dataclass
 from enum import StrEnum
 from datetime import datetime, timezone
-from typing import Dict, Tuple, List, Any
-from dataclasses import dataclass
+from typing import Dict, Tuple, Any
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 import xpwebapi
+
+# Personal libraries
 from kml import to_kml
+from unitutil import convert
+from geoutil import Point, Line, distance, destination, bearing_deg, point_in_polygon, nearest_point_to_line
 
 FORMAT = "[%(asctime)s] %(levelname)s %(threadName)s %(filename)s:%(funcName)s:%(lineno)d: %(message)s"
 logging.basicConfig(level=logging.INFO, format=FORMAT, datefmt="%H:%M:%S")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 
 # ###############################
 # Utility function
 #
-R = 6371000  # Radius of third rock from the sun, in metres
-FT = 12 * 0.0254  # 1 FOOT = 12 INCHES
-NAUTICAL_MILE = 1.852  # Nautical mile in meters 6076.118ft=1nm
-MS_2_FPM = 196.850
-M_2_FT = 3.2808
 G = 9.80665
 
 
 def now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-# Geo essentials
-#
-def angle_to_360(alfa):
-    beta = alfa % 360
-    if beta < 0:
-        beta = beta + 360
-    return beta
-
-
-def haversine(lat1: float, lat2: float, lon1: float, lon2: float) -> float:  # in radians.
-    dlat, dlon = lat2 - lat1, lon2 - lon1
-    return math.pow(math.sin(dlat / 2), 2) + math.cos(lat1) * math.cos(lat2) * math.pow(math.sin(dlon / 2), 2)
-
-
-def distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:  # in degrees.
-    lat1, lat2 = math.radians(lat1), math.radians(lat2)
-    lon1, lon2 = math.radians(lon1), math.radians(lon2)
-    a = haversine(lat1, lat2, lon1, lon2)
-    return 2 * R * math.asin(math.sqrt(a))  # in m
-
-
-def bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    lat1 = math.radians(lat1)
-    lon1 = math.radians(lon1)
-    lat2 = math.radians(lat2)
-    lon2 = math.radians(lon2)
-
-    y = math.sin(lon2 - lon1) * math.cos(lat2)
-    x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(lon2 - lon1)
-    t = math.atan2(y, x)
-    brng = angle_to_360(math.degrees(t))  # in degrees
-    return brng
-
-
-def destination(lat: float, lon: float, brngDeg: float, d: float) -> Tuple[float, float]:
-    # From lat, lon, move d meters heading brngDeg
-    lat = math.radians(lat)
-    lon = math.radians(lon)
-    brng = math.radians(brngDeg)
-    r = d / R
-
-    lat2 = math.asin(math.sin(lat) * math.cos(r) + math.cos(lat) * math.sin(r) * math.cos(brng))
-    lon2 = lon + math.atan2(
-        math.sin(brng) * math.sin(r) * math.cos(lat),
-        math.cos(r) - math.sin(lat) * math.sin(lat2),
-    )
-    return (math.degrees(lat2), math.degrees(lon2))
-
-
-def point_in_polygon(point: Tuple[float, float], polygon: List[Tuple[float, float]]) -> bool:
-    # this will do. We do very local geometry (5000m around current location)
-    # pt is [x,y], pol is [[x,y],...]; should be "closed", pol[0] == pol[-1].
-    pt = point
-    pol = polygon
-    inside = False
-    for i in range(len(pol)):
-        x0, y0 = pol[i]
-        x1, y1 = pol[(i + 1) % len(pol)]
-        if not min(y0, y1) < pt[1] <= max(y0, y1):
-            continue
-        if pt[0] < min(x0, x1):
-            continue
-        cur_x = x0 if x0 == x1 else x0 + (pt[1] - y0) * (x1 - x0) / (y1 - y0)
-        inside ^= pt[0] > cur_x
-    return inside
-
-
-# Line = {start, end}, start, end are point
-# Point = {lat, lon}
-@dataclass
-class Point:
-    lat: float
-    lon: float
-
-
-@dataclass
-class Line:
-    start: Point
-    end: Point
 
 
 @dataclass
@@ -182,20 +100,20 @@ class Runway:
         lat2, lon2 = self.he_latitude_deg, self.he_longitude_deg
         brgn = bearing_deg(lat1, lon1, lat2, lon2)  # bearing 1 -> 2
         if self.width_ft == NOT_SET:
-            self.width_ft = 100   # forced default, 30m wide
-        halfwidth = (self.width_ft / M_2_FT) / 2
+            self.width_ft = 100  # forced default, 30m wide
+        halfwidth = convert.feet_to_meters(self.width_ft / 2)
 
         # Displaced threshold
         # Backup le point
         if self.le_displaced_threshold_ft != NOT_SET:
-            m = self.le_displaced_threshold_ft / M_2_FT
+            m = convert.feet_to_meters(self.le_displaced_threshold_ft)
             nlat1, nlon1 = destination(lat1, lon1, brgn + 180, m)
             lat1 = nlat1
             lon1 = nlon1
 
         # Move forward he point
         if self.he_displaced_threshold_ft != NOT_SET:
-            m = self.he_displaced_threshold_ft / M_2_FT
+            m = convert.feet_to_meters(self.he_displaced_threshold_ft)
             nlat2, nlon2 = destination(lat2, lon2, brgn, m)
             lat2 = nlat2
             lon2 = nlon2
@@ -216,82 +134,11 @@ class Runway:
     def inside(self, lat: float, lon: float) -> bool:
         return point_in_polygon(point=(lat, lon), polygon=self.bbox)
 
-def mkLine(lat1: float, lon1: float, lat2: float, lon2: float):
-    return Line(Point(lat1, lon1), Point(lat2, lon2))
-
-
-def line_intersect(line1: Line, line2: Line) -> Point | None:
-    # Finds intersection of line1 and line2. Returns Point() of intersection or None.
-    # !! Source code copied from GeoJSON code where coordinates are (longitude, latitude).
-    x1 = line1.start.lon
-    y1 = line1.start.lat
-    x2 = line1.end.lon
-    y2 = line1.end.lat
-    x3 = line2.start.lon
-    y3 = line2.start.lat
-    x4 = line2.end.lon
-    y4 = line2.end.lat
-    denom = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1)
-    numeA = (x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)
-    numeB = (x2 - x1) * (y1 - y3) - (y2 - y1) * (x1 - x3)
-
-    if denom == 0:
-        if numeA == 0 and numeB == 0:
-            return None
-        return None
-
-    uA = numeA / denom
-    uB = numeB / denom
-
-    if uA >= 0 and uA <= 1 and uB >= 0 and uB <= 1:
-        x = x1 + uA * (x2 - x1)
-        y = y1 + uA * (y2 - y1)
-        # return [x, y]  # x is longitude, y is latitude.
-        return Point(lat=y, lon=x)
-    return None
-
-
-# nearest_point_to_lines(p=Point(lat, lon), lines=[mkLine(lat1, lon1, lat2, lon2)])
-# def nearest_point_to_lines(p: Point, lines: List[Line]) -> Tuple[Point | None, float]:
-#     # First the nearest point to a collection of lines.
-#     # Lines is an array if Line()
-#     # Returns the point and and distance to it.
-#     dist = math.inf
-#     for line in lines:
-#         d1 = distance(p.lat, p.lon, line.start.lat, line.start.lon)
-#         d2 = distance(p.lat, p.lon, line.end.lat, line.end.lon)
-#         dl = max(d1, d2) * 2
-#         brng = bearing_deg(line.start.lat, line.start.lon, line.end.lat, line.end.lon)
-#         brng += 90  # perpendicular
-#         lat1,lon1 = destination(p.lat, p.lon, brng, dl)
-#         brng -= 180  # perpendicular
-#         lat2,lon2 = destination(p.lat, p.lon, brng, dl)
-#         perpendicular = Line(Point(lat1,lon1), Point(lat2,lon2))
-#         loni, lati = line_intersect(perpendicular, line)
-#         if loni is not None and lati is not None:
-#             d = distance(p.lat, p.lon, lati, loni)
-#             if d < dist:
-#                 dist = d
-#             return (Point(lati, loni), dist)
-#     return (None, dist)
-
-
-def nearest_point_to_line(p: Point, line: Line) -> Tuple[Point | None, float]:
-    d1 = distance(p.lat, p.lon, line.start.lat, line.start.lon)
-    d2 = distance(p.lat, p.lon, line.end.lat, line.end.lon)
-    dl = max(d1, d2)
-    brng = bearing_deg(line.start.lat, line.start.lon, line.end.lat, line.end.lon)
-    brng += 90  # perpendicular
-    lat1, lon1 = destination(p.lat, p.lon, brng, dl)
-    brng -= 180  # perpendicular
-    lat2, lon2 = destination(p.lat, p.lon, brng, dl)
-    perpendicular = Line(Point(lat1, lon1), Point(lat2, lon2))
-    intersect = line_intersect(perpendicular, line)
-    return (intersect, distance(p.lat, p.lon, intersect.lat, intersect.lon)) if intersect is not None else (None, 0)
-
 
 # Cleanup procedure
 def min_info(r):
+    # Minimum info needed for runway
+    # No info, no runway
     def empty(c):
         return c is None or c == ""
 
@@ -306,10 +153,12 @@ def min_info(r):
     return not empty(r.get("le_heading_degT")) or not empty(r.get("le_heading_degT"))
 
 
-NOT_SET = 99999
+NOT_SET = -99999
 
 
 def float_all(r):
+    # Convert string to float
+    # replace non existent with NOT_SET = null float, could be math.inf
     for c in [
         "id",
         "airport_ref",
@@ -343,7 +192,7 @@ def float_all(r):
 #
 # Thresholds
 #
-ALT_LOW = 150  # above that altitude, we do nothing
+LOW_ALTITUDE = 150  # above that altitude, we do nothing
 SPEED_SLOW = 15  # m/s, below that ground speed, we do nothing
 CLOSE_AIRPORT = 40000  # 80km
 REPORTING_DELAY = 20  # seconds
@@ -360,11 +209,11 @@ RATINGS = [
 
 
 class STATE(StrEnum):
-    FAR = "Far"  # flying and above 1000m
+    ALT_HIGH = "above ALT1000M"  # flying and above 1000m
     ALT1000M = "at or under ALT1000M"  # [300-1000], must have a short list of runways in sight
     ALT300M = "at or under ALT300M"  # [150-300], must have a target runway
-    CLOSE = f"at or under ALT_LOW(~{ALT_LOW}m)"  # monitoring
-    ON_RUNWAY = "on runway"  # over or on the runway, monitoring
+    ALT_LOW = f"at or under LOW_ALTITUDE(~{LOW_ALTITUDE}m)"  # monitoring
+    ON_RUNWAY = "on/over runway"  # on or over the runway, monitoring
     GROUNDED = "on the ground, not on runway"  # on the ground, not on runway
 
 
@@ -432,7 +281,6 @@ class LandingRatingMonitor:
 
         # Remeber dataref values
         self.first: Dict[str, Any] = {}
-        self.last: Dict[str, Any] = {}
 
         self.snapshots: Dict[EVENT, Tuple] = {}
 
@@ -500,7 +348,6 @@ class LandingRatingMonitor:
                 v = self.dataref_value(d)
                 if v is not None:
                     self.first[d] = v
-                    self.last[d] = v
                     # logger.debug(f"first value for {d}={v}")
         if not self.inited:
             return
@@ -514,7 +361,7 @@ class LandingRatingMonitor:
         self.shortlist_closest_runways()
 
         if self.dataref_value(DREFS.Y_AGL) > 1000:
-            self.state = STATE.CLOSE
+            self.state = STATE.ALT_LOW
             logger.info(f".. state is {self.state}")  # this is the initial value
             return
 
@@ -525,7 +372,7 @@ class LandingRatingMonitor:
             logger.info(f".. state is {self.state}")  # this is the initial value
             return
 
-        if self.dataref_value(DREFS.Y_AGL) > ALT_LOW:
+        if self.dataref_value(DREFS.Y_AGL) > LOW_ALTITUDE:
             self.state = STATE.ALT300M
             logger.info(f".. state is {self.state}")  # this is the initial value
             return
@@ -552,11 +399,11 @@ class LandingRatingMonitor:
             return
 
         if self.dataref_value(DREFS.Y_AGL) > 0:
-            self.state = STATE.CLOSE
+            self.state = STATE.ALT_LOW
             logger.info(f".. state is {self.state}")  # this is the initial value
 
     def show_values(self, welcome: str = "", first: bool = False):
-        values = self.first if first else self.last
+        values = self.first
         logger.debug(f"{welcome}\n{'\n'.join([f'{d} = {values[d]}' for d in values])}")
 
     def on_the_ground(self) -> bool:
@@ -610,8 +457,7 @@ class LandingRatingMonitor:
             if value > 1000:
                 self._air_time = True
                 self.last_grounded = False
-                self.state = STATE.FAR
-                self.last[dataref] = value
+                self.state = STATE.ALT_HIGH
                 return
 
             if 300 < value <= 1000:
@@ -626,7 +472,7 @@ class LandingRatingMonitor:
                             s = set([d.airport_ident for d in self._runways_shortlist])
                             logger.info(f"airport short list {', '.join(s)}")
 
-            if ALT_LOW < value <= 300:
+            if LOW_ALTITUDE < value <= 300:
                 self.last_grounded = False
                 self._air_time = True
                 if self.ensure_below("alt300", threshold=300, value=value, count=20) == 0:
@@ -638,28 +484,26 @@ class LandingRatingMonitor:
                     if self.runway is None:
                         logger.warning("below 300m and no target runway")
 
-            if value <= ALT_LOW and not self.on_the_ground():
+            if value <= LOW_ALTITUDE and not self.on_the_ground():
                 self._air_time = True
-                if self.ensure_below("altlow", threshold=ALT_LOW, value=value, count=20) == 0:
+                if self.ensure_below("altlow", threshold=LOW_ALTITUDE, value=value, count=20) == 0:
                     if EVENT.APPROACH not in self.snapshots:
                         self.snapshot(EVENT.APPROACH)
-                    self.state = STATE.CLOSE
+                    self.state = STATE.ALT_LOW
                     self.shortlist_closest_runways()
                     if len(self._runways_shortlist) == 0:
-                        logger.warning(f"below {ALT_LOW}m and no short list")
+                        logger.warning(f"below {LOW_ALTITUDE}m and no short list")
                     self.target_runway_ahead(ahead=10000)
                     if self.runway is None:
-                        logger.warning(f"below {ALT_LOW}m and no target runway")
-                    logger.info(f"below {ALT_LOW}m, monitoring started..")
-
-            self.last[dataref] = value
+                        logger.warning(f"below {LOW_ALTITUDE}m and no target runway")
+                    logger.info(f"below {LOW_ALTITUDE}m, monitoring started..")
             return
 
         on_runway = False
         if dataref in [DREFS.LATITUDE, DREFS.LONGITUDE]:
             on_runway = self.on_runway()
 
-        if self.state == STATE.CLOSE and dataref in [DREFS.LATITUDE, DREFS.LONGITUDE]:
+        if self.state == STATE.ALT_LOW and dataref in [DREFS.LATITUDE, DREFS.LONGITUDE]:
             if not self._on_target_runway and self.on_target_runway():  # compare old and new value, on_target_runway will set _on_target_runway to latest eval
                 self.snapshot(EVENT.ENTER_RWY)  # ground speed less than 50km/h, brake is ok, we can exit runway
                 self.state = STATE.ON_RUNWAY
@@ -669,8 +513,8 @@ class LandingRatingMonitor:
                 self.snapshot(EVENT.EXIT_RWY)  # ground speed less than 50km/h, brake is ok, we can exit runway
                 logger.info("exit target runway")
                 if self.result is None:
-                    result = threading.Timer(REPORTING_DELAY, self.report)  # give time to further slow down in case of speedy exit
-                    result.start()
+                    self.result = threading.Timer(REPORTING_DELAY, self.report)  # give time to further slow down in case of speedy exit
+                    self.result.start()
                     logger.info("preparing report..")
                 if EVENT.SLOWDOWN in self.snapshots:
                     logger.info("..monitoring ended")
@@ -678,28 +522,24 @@ class LandingRatingMonitor:
                     self.state = STATE.GROUNDED
                 else:
                     # should check alt and ground speed
-                    self.state = STATE.CLOSE  # go-around?
+                    self.state = STATE.ALT_LOW  # go-around?
 
         if dataref == DREFS.GROUND_SPEED:  # position
             if self.last_grounded and self._last_fast:
                 if value < SPEED_SLOW and not EVENT.SLOWDOWN in self.snapshots:
                     self.snapshot(EVENT.SLOWDOWN)  # ground speed less than 50km/h, brake is ok, we can exit runway
                     self._last_fast = False
-                    self.last[dataref] = value
                     logger.info("deceleration completed")
                     if self.result is None:
-                        result = threading.Timer(REPORTING_DELAY, self.report)  # give time to further slow down in case of speedy exit
-                        result.start()
+                        self.result = threading.Timer(REPORTING_DELAY, self.report)  # give time to further slow down in case of speedy exit
+                        self.result.start()
                         logger.info("preparing report..")
                     if EVENT.EXIT_RWY in self.snapshots:
                         logger.info("..monitoring ended")
             self._last_fast = value > SPEED_SLOW
 
-        if self.state in [STATE.CLOSE, STATE.ON_RUNWAY]:
+        if self.state in [STATE.ALT_LOW, STATE.ON_RUNWAY]:
             self.monitor_landing()
-
-        # Save new value as last one
-        self.last[dataref] = value
 
     def monitor_landing(self):
         """Based on STATE and dataref values we monitor the landing parameters"""
@@ -748,12 +588,17 @@ class LandingRatingMonitor:
         t21 = (self._vspeeds[-2][0] - self._vspeeds[-1][0]).total_seconds()
         g = 1.0 + (-vs2 * t21 / (t10 * t20) + vs1 / t10 - vs1 / t21 + vs0 * t10 / (t21 * t20)) / G
 
+        # Cap g at 10g.
+        MAX_G = 10
+        g = min(MAX_G, g)
+        g = max(-MAX_G, g)
+
         # compute G low pass filtered
         g_lp = 1
         LP = 5
         if len(self._vspeeds) > (LP + 1):
             total = 0
-            for i in range(2, LP+1):
+            for i in range(2, LP + 1):
                 total = total + self._vspeeds[-i][4] * (self._vspeeds[-i + 1][0] - self._vspeeds[-i][0]).total_seconds()
             g_lp = total / (self._vspeeds[-1][0] - self._vspeeds[-LP][0]).total_seconds()
 
@@ -909,8 +754,10 @@ class LandingRatingMonitor:
                 logger.info(f"exit runway {self._currently_on_runway}")
                 self._currently_on_runway = None
             if len(rwys) > 1:
-                logger.warning(f"currently on more than one runway ({[str(r) for r in rwys]}), {rwys[0]} returned")
-                if self._currently_on_runway is None:
+                if self._currently_on_runway is not None:  # carry on on same runway
+                    logger.warning(f"currently on more than one runway ({[str(r) for r in rwys]}), remaining on {self._currently_on_runway}")
+                else:
+                    logger.warning(f"currently on more than one runway ({[str(r) for r in rwys]}), {rwys[0]} returned")
                     self._currently_on_runway = rwys[0]
                     logger.info(f"enter runway {self._currently_on_runway}")
             return rwys[0]
@@ -922,18 +769,6 @@ class LandingRatingMonitor:
         return None
 
     def report(self):
-        def to_kmh(kt: float) -> float:
-            return round(kt * 1.852, 1)
-
-        def to_ms(kt: float) -> float:
-            return round(kt * 0.5144444, 1)
-
-        def to_kt(ms: float) -> float:
-            return round(ms * 1.943844, 1)
-
-        def to_fpm(ms: float) -> float:
-            return round(ms * MS_2_FPM)
-
         def snap_dataref_value(s, dref: DREFS):
             return s[2][dref]
 
@@ -956,7 +791,7 @@ class LandingRatingMonitor:
             alt = snap_dataref_value(snapa, DREFS.Y_AGL)
             speed = snap_dataref_value(snapa, DREFS.INDICATED_AIRSPEED)
             logger.info(
-                f"Approach speed at {round(snapa[1])}m from runway: alt={round(alt)}, speed={round(speed, 1)}kt, {to_kmh(speed)}km/h, {to_ms(speed)}m/s"
+                f"Approach speed at {round(snapa[1])}m from runway: alt={round(alt)}, speed={round(speed, 1)}kt, {round(convert.kn_to_kmh(speed),1)}km/h, {round(convert.kn_to_ms(speed), 2)}m/s"
             )
         else:
             logger.info("no approach information")
@@ -967,7 +802,7 @@ class LandingRatingMonitor:
             alt = snap_dataref_value(snapi, DREFS.Y_AGL)
             speed = snap_dataref_value(snapi, DREFS.INDICATED_AIRSPEED)
             logger.info(
-                f"Approach speed entering runway ({round(snapi[1])}m from edge): alt={round(alt)}, speed={round(speed, 1)}kt, {to_kmh(speed)}km/h, {to_ms(speed)}m/s"
+                f"Approach speed entering runway ({round(snapi[1])}m from edge): alt={round(alt)}, speed={round(speed, 1)}kt, {round(convert.kn_to_kmh(speed),1)}km/h, {round(convert.kn_to_ms(speed), 2)}m/s"
             )
         else:
             logger.info("no fly over runway, no target runway entry")
@@ -982,7 +817,7 @@ class LandingRatingMonitor:
             t0 = snapt[0]
             d0 = snapt[1]
             logger.info(
-                f"Touchdown at {snapt[0].strftime('%H:%M:%S')}Z, {round(snapt[1])}m from runway edge: alt={round(alt)}, speed={round(speed, 1)}kt, {to_kmh(speed)}km/h, {to_ms(speed)}m/s"
+                f"Touchdown at {snapt[0].strftime('%H:%M:%S')}Z, {round(snapt[1])}m from runway edge: alt={round(alt)}, speed={round(speed, 1)}kt, {round(convert.kn_to_kmh(speed),1)}km/h, {round(convert.kn_to_ms(speed), 2)}m/s"
             )
 
             dist = ""
@@ -1009,21 +844,23 @@ class LandingRatingMonitor:
             vspeed = snapt[3]  # 0=timestamp, 1=vertical speed, 2=true_theta, 3=value, 4=g, 5=g low pass
             if vspeed is not None and len(vspeed) > 5:
                 vs = abs(vspeed[1])
-                vs_fpm = to_fpm(vs)
+                vs_fpm = convert.ms_to_fpm(vs)
                 i = 0
                 while abs(vs_fpm) > RATINGS[i][0] and i < len(RATINGS):
                     i = i + 1
                 logger.info(f"{RATINGS[i][1]}")
-                logger.info(f"Vy: {vs_fpm} fpm, {round(vs, 2)} m/s, 𝛉 {round(vspeed[2], 2)}°, 𝛗 {round(vspeed[3], 1)}°")
+                logger.info(f"Vy: {round(vs_fpm, 1)} fpm, {round(vs, 2)} m/s, 𝛉 {round(vspeed[2], 2)}°, 𝛗 {round(vspeed[3], 1)}°")
                 logger.info(f"G:  {round(vspeed[4], 2)}, smoothed: {round(vspeed[5], 2)}")
-                logger.info(f"G display: {self._display_g}")
+                logger.info(f"G display: {round(self._display_g[0], 2)}, {round(self._display_g[1], 2)}")
         else:
             logger.info("no touch down detected")
 
         snapf = self.snapshots.get(EVENT.FRONTGEAR)
         if snapf is not None:  # this is "optional", and for ToLiss aircrafts mainly
             speed = snap_dataref_value(snapf, DREFS.INDICATED_AIRSPEED)
-            logger.info(f"Front wheel touchdown {round(snapf[1])}m from runway edge: speed={round(speed, 1)}kt, {to_kmh(speed)}km/h, {to_ms(speed)}m/s")
+            logger.info(
+                f"Front wheel touchdown {round(snapf[1])}m from runway edge: speed={round(speed, 1)}kt, {round(convert.kn_to_kmh(speed),1)}km/h, {round(convert.kn_to_ms(speed), 2)}m/s"
+            )
 
         snaps = self.snapshots.get(EVENT.SLOWDOWN)
         if snaps is not None:
@@ -1033,7 +870,7 @@ class LandingRatingMonitor:
                 d1 = snaps[1] - d0
                 breaking = f", braking distance {round(d1)}m"
             logger.info(
-                f"Slow speed ({SPEED_SLOW}m/s) at {round(snaps[1])}m from runway edge: speed={to_kt(speed)}kt, {round(speed, 1)}m/s{breaking}"
+                f"Slow speed ({SPEED_SLOW}m/s) at {round(snaps[1])}m from runway edge: speed={round(convert.ms_to_kn(speed), 1)}kt, {round(speed, 1)}m/s{breaking}"
             )
         else:
             logger.info(f"no deceleration to slower speed {SPEED_SLOW}m/s detected")
@@ -1062,7 +899,7 @@ class LandingRatingMonitor:
         with open("vs.csv", "w") as fp:
             i = 0
             for f in self._vspeeds:
-                print(f"{i},{f[0].timestamp()},"+','.join([str(v) for v in f[1:]]), file=fp)
+                print(f"{i},{f[0].timestamp()}," + ",".join([str(v) for v in f[1:]]), file=fp)
                 i = i + 1
         logger.info("vspeeds written in vs.csv")
 
@@ -1073,9 +910,10 @@ class LandingRatingMonitor:
         logger.info("monitor state saved")
 
     def reset(self):
+        # sleep 1 minute?
         self.first = {}
-        self.last = {}
         self.snapshots = {}
+        self.result = None
         # Working variables
         self._currently_on_runway = None
         self._state = STATE.GROUNDED
