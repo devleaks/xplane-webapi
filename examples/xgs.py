@@ -23,6 +23,7 @@ from dataclasses import dataclass
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 import xpwebapi
+from kml import to_kml
 
 FORMAT = "[%(asctime)s] %(levelname)s %(threadName)s %(filename)s:%(funcName)s:%(lineno)d: %(message)s"
 logging.basicConfig(level=logging.INFO, format=FORMAT, datefmt="%H:%M:%S")
@@ -712,7 +713,7 @@ class LandingRatingMonitor:
             self.last_grounded = True
         elif self.last_grounded and not grounded:
             if not self._bouncing:
-                logger.debug("bouncing? touch and go? going around?")
+                logger.debug("bouncing detected")
                 self._bouncing = True
 
     def closest_orient(self, rwy: Runway) -> str:
@@ -731,7 +732,7 @@ class LandingRatingMonitor:
     def record_vspeed(self):
         vs = self.dataref_value(DREFS.LOCAL_VY)
         tt = self.dataref_value(DREFS.TRUE_THETA)
-        val = vs * math.cos(tt * 0.0174533)
+        val = vs * math.cos(tt * 0.0174533)  # vs projected vertically
         ts = now()
 
         if len(self._vspeeds) < 2:
@@ -747,21 +748,21 @@ class LandingRatingMonitor:
         t21 = (self._vspeeds[-2][0] - self._vspeeds[-1][0]).total_seconds()
         g = 1.0 + (-vs2 * t21 / (t10 * t20) + vs1 / t10 - vs1 / t21 + vs0 * t10 / (t21 * t20)) / G
 
-        # self._vspeeds[-1][4] = g
+        # compute G low pass filtered
         g_lp = 1
+        LP = 5
+        if len(self._vspeeds) > (LP + 1):
+            total = 0
+            for i in range(2, LP+1):
+                total = total + self._vspeeds[-i][4] * (self._vspeeds[-i + 1][0] - self._vspeeds[-i][0]).total_seconds()
+            g_lp = total / (self._vspeeds[-1][0] - self._vspeeds[-LP][0]).total_seconds()
+
         # 0=timestamp, 1=vertical speed, 2=true_theta, 3=value, 4=g, 5=g low pass
         self._vspeeds.append([ts, vs, tt, val, g, g_lp])
-        # compute G low pass filtered
-        LP = 5
-        if len(self._vspeeds) > LP:
-            total = 0
-            for i in range(2, LP):  # LP+1?
-                total = total + self._vspeeds[-i][3] * (self._vspeeds[-i + 1][0] - self._vspeeds[-i][0]).total_seconds()
-            g_lp = total / (self._vspeeds[-LP][0] - self._vspeeds[-1][0]).total_seconds()
-            self._vspeeds[-2][5] = g_lp
-        if 0 < self.since_touchdown < 10:
+
+        if 0 < self.since_touchdown < 10:  # keep min and max smoothed values
             self._display_g = (min(self._display_g[0], g_lp), max(self._display_g[1], g_lp))
-        self._vspeeds[-1][5] = g_lp
+
         # if self.dataref_value(DREFS.Y_AGL) < 10 and self.dataref_value(DREFS.GROUND_SPEED) > 60:
         #     print(f"{self._vspeeds[-1][0].strftime('%S.%f')}, vs={round(vs,2)} g={round(g, 2)} lpg={round(g_lp, 2)}")
 
@@ -786,6 +787,7 @@ class LandingRatingMonitor:
             logger.warning(f"snapshot {event} already taken")
             return
         distthr = -1
+        logger.debug(f"snapshot {event} around index {len(self._vspeeds)}, ts={now().isoformat()}")
         if self.runway is not None:
             lat = self.dataref_value(DREFS.LATITUDE)
             lon = self.dataref_value(DREFS.LONGITUDE)
@@ -1057,7 +1059,18 @@ class LandingRatingMonitor:
         self.reset()
 
     def save(self):
-        logger.info("monitor state was not saved (not implemented yet)")
+        with open("vs.csv", "w") as fp:
+            i = 0
+            for f in self._vspeeds:
+                print(f"{i},{f[0].timestamp()},"+','.join([str(v) for v in f[1:]]), file=fp)
+                i = i + 1
+        logger.info("vspeeds written in vs.csv")
+
+        with open("path.kml", "w") as fp:
+            fp.write(to_kml(self._positions, airport={"lat": self.runway.he_latitude_deg, "lon": self.runway.he_longitude_deg}))
+        logger.info("flight path in path.kml")
+
+        logger.info("monitor state saved")
 
     def reset(self):
         self.first = {}
