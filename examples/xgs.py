@@ -463,7 +463,7 @@ class LandingRatingMonitor:
                 self.last_grounded = False
                 self.state = ALTITUDE.ALT_HIGH
 
-            if 300 < value <= 1000: # should have a short list of runway targets
+            if 300 < value <= 1000:  # should have a short list of runway targets
                 self._air_time = True
                 if self.ensure_below("alt1000", threshold=1000, value=value, count=20) == 0:
                     self.state = ALTITUDE.ALT1000M
@@ -475,7 +475,7 @@ class LandingRatingMonitor:
                             s = set([d.airport_ident for d in self._runways_shortlist])
                             logger.info(f"airport short list {', '.join(s)}")
 
-            if LOW_ALTITUDE < value <= 300: # should have a runway target
+            if LOW_ALTITUDE < value <= 300:  # should have a runway target
                 self.last_grounded = False
                 self._air_time = True
                 if self.ensure_below("alt300", threshold=300, value=value, count=20) == 0:

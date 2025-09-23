@@ -80,7 +80,7 @@ class OOOIManager:
         self.name = "OOOI"
         self.ws = api
 
-        self.datarefs = {path: self.ws.dataref(path) for path in self.get_dataref_names()}
+        self.datarefs = {}
 
         self.departure = departure
         self.arrival = arrival
@@ -104,13 +104,16 @@ class OOOIManager:
         # debug
         self._onblock = False
 
+    def set_api(self, api):
+        self.ws = api
+        self.datarefs = {path: self.ws.dataref(path) for path in self.get_dataref_names()}
         self.ws.add_callback(cbtype=xpwebapi.CALLBACK_TYPE.ON_DATAREF_UPDATE, callback=self.dataref_changed)
 
-    def start(self):
-        ws.connect()
-        ws.wait_connection()
-        ws.monitor_datarefs(datarefs=self.datarefs, reason=self.name)
-        ws.start()
+    def run(self):
+        self.ws.connect()
+        self.ws.wait_connection()
+        self.ws.monitor_datarefs(datarefs=self.datarefs, reason=self.name)
+        self.ws.start()
 
     @property
     def oooi(self) -> OOOI | None:
@@ -175,6 +178,16 @@ class OOOIManager:
         Returns:
             str: string with all values
         """
+        def strfdelta(tdelta):
+            ret = ""
+            if tdelta.days > 0:
+                ret = f"{tdelta.days} d "
+            h, rem = divmod(tdelta.seconds, 3600)
+            ret = ret + f"{h:02d}"
+            m, s = divmod(rem, 60)
+            ret = ret + f"{m:02d}{s:02d}:"
+            return ret
+
         TIME_FMT = "%H%M"
 
         def pt(ts: datetime | None):
@@ -212,8 +225,21 @@ class OOOIManager:
                     report = report + " IN/----"
             if self.eta is not None:
                 report = report + f" ETA/{pt(self.eta)}"
+
+        time_info = ""
+        if self.all_oooi.get(OOOI.OFF) is not None and self.all_oooi.get(OOOI.ON) is not None:
+            flight_time = self.all_oooi.get(OOOI.ON) - self.all_oooi.get(OOOI.OFF)
+            time_info = f"flight time: {strfdelta(flight_time)}"
+        if self.all_oooi.get(OOOI.OUT) is not None and self.all_oooi.get(OOOI.IN) is not None:
+            block_time = self.all_oooi.get(OOOI.IN) - self.all_oooi.get(OOOI.OUT)
+            if time_info != "":
+                time_info = time_info = ", "
+            time_info = time_info + f"block time: {strfdelta(block_time)}"
+
         if display:
             logger.info(report)
+            if time_info != "":
+                logger.info(time_info)
         return report
 
     def acars_report(self) -> Dict:
@@ -413,7 +439,7 @@ if __name__ == "__main__":
     oooi = OOOIManager(ws, departure="EBCI", arrival="EBBR", callsign="BEL034", logon="none", station="EBJA")
     try:
         oooi.set_eta(now() + timedelta(minutes=30))
-        oooi.start()
+        oooi.run()
     except KeyboardInterrupt:
         logger.warning("terminating..")
         oooi.terminate()

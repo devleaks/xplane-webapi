@@ -108,22 +108,23 @@ class FDR:
         self.file = None
         self.writes = 0
         self.write_thread = threading.Thread(target=self.write, name="FDR Data Writer")
-        self.datarefs = {path: self.ws.dataref(path) for path in self.get_dataref_names()}
+        self.datarefs = {}
         self.optional_datarefs: Dict[str, xpwebapi.Dataref] = {}
-        self.init()
 
-    def init(self):
+    def set_api(self, api):
+        self.ws = api
         self.ws.add_callback(cbtype=xpwebapi.CALLBACK_TYPE.ON_DATAREF_UPDATE, callback=self.dataref_changed)
+        self.datarefs = {path: self.ws.dataref(path) for path in self.get_dataref_names()}
 
     @property
     def header_ok(self) -> bool:
         return all(self.header.values())
 
-    def start(self):
-        ws.connect()
-        ws.wait_connection()
-        ws.monitor_datarefs(datarefs=self.datarefs, reason="Flight data recorder")
-        ws.start()
+    def run(self):
+        self.ws.connect()
+        self.ws.wait_connection()
+        self.ws.monitor_datarefs(datarefs=self.datarefs, reason="Flight data recorder")
+        self.ws.start()
 
     def get_dataref_names(self) -> set:
         return HEADER | set(FDR_DATA) | set(FDR_OPTIONAL)
@@ -241,10 +242,10 @@ class FDR:
 
 
 if __name__ == "__main__":
-    ws = xpwebapi.ws_api() # host="192.168.1.141", port=8080)
+    ws = xpwebapi.ws_api()  # host="192.168.1.141", port=8080)
     fdr = FDR(ws, frequency=1.0)
     try:
-        fdr.start()
+        fdr.run()
     except KeyboardInterrupt:
         logger.warning("terminating..", exc_info=True)
         fdr.terminate()
