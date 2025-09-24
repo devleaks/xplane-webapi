@@ -15,14 +15,16 @@ Currently use Websocket API. TO do: Use alternate protocols: REST, UDP. Should w
 import os
 import sys
 import logging
-import threading
+import argparse
 import datetime
 from typing import Dict
 from time import sleep
+import traceback
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 import xpwebapi
+from xpwsapp import XPWSAPIApp
 
 FORMAT = "[%(asctime)s] %(levelname)s %(threadName)s %(filename)s:%(funcName)s:%(lineno)d: %(message)s"
 logging.basicConfig(level=logging.INFO, format=FORMAT, datefmt="%H:%M:%S")
@@ -97,34 +99,22 @@ WRITE_FREQUENCY = 1.0  # seconds
 REPORT_FREQUENCY = 20.0  # seconds, 0 to disable
 
 
-class FDR:
+class FDR(XPWSAPIApp):
 
     def __init__(self, api, filename: str = FDR_FILENAME, frequency: float = WRITE_FREQUENCY) -> None:
-        self.ws = api
+        XPWSAPIApp.__init__(self, api=api)
+
         self.filename = filename
         self.frequency = frequency
         self.header = {d: False for d in HEADER}
         self.lines = []
         self.file = None
         self.writes = 0
-        self.write_thread = threading.Thread(target=self.write, name="FDR Data Writer")
-        self.datarefs = {}
         self.optional_datarefs: Dict[str, xpwebapi.Dataref] = {}
-
-    def set_api(self, api):
-        self.ws = api
-        self.ws.add_callback(cbtype=xpwebapi.CALLBACK_TYPE.ON_DATAREF_UPDATE, callback=self.dataref_changed)
-        self.datarefs = {path: self.ws.dataref(path) for path in self.get_dataref_names()}
 
     @property
     def header_ok(self) -> bool:
         return all(self.header.values())
-
-    def run(self):
-        self.ws.connect()
-        self.ws.wait_connection()
-        self.ws.monitor_datarefs(datarefs=self.datarefs, reason="Flight data recorder")
-        self.ws.start()
 
     def get_dataref_names(self) -> set:
         return HEADER | set(FDR_DATA) | set(FDR_OPTIONAL)
@@ -197,7 +187,9 @@ class FDR:
         optional = "" if len(self.optional_datarefs) == 0 else ", " + ", ".join([f"{self.dataref_value(d)}" for d in self.optional_datarefs.keys()])
         return base + optional + "\n"
 
-    def write(self):
+    def loop(self):
+        print(">>>>>>>>>>> STARTED")
+        traceback.print_stack()
         r = 100000
         if REPORT_FREQUENCY > 0:
             r = int(self.frequency if self.frequency > REPORT_FREQUENCY else REPORT_FREQUENCY / self.frequency)
@@ -217,36 +209,74 @@ class FDR:
             if dataref in HEADER:
                 self.header[dataref] = True
                 if self.header_ok:
-                    # writing header
-                    self.print_header()
-                    # writing buffered lines
-                    self.file = open(self.filename, "a")
-                    for l in self.lines:
-                        self.writes = self.writes + 1
-                        self.file.write(l)
-                    logger.debug(f"FDR {len(self.lines)} buffered lines written")
-                    self.lines = []
-                    self.write_thread.start()
+                    self.start()
                 return
 
             # buffering lines every second while header not written
             if dataref == "sim/cockpit2/clock_timer/zulu_time_seconds":
                 self.lines.append(self.print_line())
 
-    def terminate(self):
+    def start(self):
+        if not self.header_ok:
+            return
+        # writing header
+        self.print_header()
+        # writing buffered lines
+        self.file = open(self.filename, "a")
+        for l in self.lines:
+            self.writes = self.writes + 1
+            self.file.write(l)
+        logger.debug(f"FDR {len(self.lines)} buffered lines written")
+        self.lines = []
+        super().start()
+
+    def stop(self):
         if self.file is not None:
             self.file.close()
             self.file = None
-        ws.unmonitor_datarefs(datarefs=self.datarefs, reason="Flight data recorder")
-        self.ws.disconnect()
 
 
 if __name__ == "__main__":
-    ws = xpwebapi.ws_api()  # host="192.168.1.141", port=8080)
-    fdr = FDR(ws, frequency=1.0)
+
+    parser = argparse.ArgumentParser(description="Show simulator time")
+    parser.add_argument("--version", action="store_true", help="shows version information and exit")
+    parser.add_argument("--use-beacon", action="store_true", help="REMOTE USE ONLY: attempt to use X-Plane UDP beacon to discover network address")
+    parser.add_argument("--host", nargs=1, help="REMOTE USE ONLY: X-Plane hostname or ip address (default to localhost)")
+    parser.add_argument("--port", nargs="?", help="REMOTE USE ONLY: X-Plane web api TCP/IP port number (defatul to 8086)")
+    parser.add_argument("-v", "--verbose", action="store_true", help="shows more information")
+
+    args = parser.parse_args()
+
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+
+    if args.version:
+        print(version)
+        os._exit(0)
+
+    probe = None
+    api = None
+
+    if args.use_beacon:
+        probe = xpwebapi.beacon()
+        api = xpwebapi.ws_api()
+        probe.set_callback(api.beacon_callback)
+        probe.start_monitor()
+    else:
+        if args.host is not None and args.port is not None:
+            if args.verbose:
+                logger.info(f"api at {args.host}:{args.port}")
+            api = xpwebapi.ws_api(host=args.host, port=args.port)
+        else:
+            if args.verbose:
+                logger.info("api at localhost:8086")
+            api = xpwebapi.ws_api()
+
+    logger.debug("starting..")
+    app = FDR(api, frequency=1.0)
     try:
-        fdr.run()
+        app.run()
     except KeyboardInterrupt:
-        logger.warning("terminating..", exc_info=True)
-        fdr.terminate()
+        logger.warning("terminating..")
+        app.terminate()
         logger.warning("..terminated")

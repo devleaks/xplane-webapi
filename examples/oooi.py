@@ -6,6 +6,7 @@ Extrernal (to X-Plane) application to detect OOOI ACARS message changes and gene
 import logging
 import os
 import sys
+import argparse
 from datetime import datetime, timedelta, timezone
 from enum import Enum, StrEnum
 from typing import Dict, Any, Tuple
@@ -14,6 +15,8 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 import humanize
 import xpwebapi
+
+from xpwsapp import XPWSAPIApp
 
 FORMAT = "[%(asctime)s] %(levelname)s %(threadName)s %(filename)s:%(funcName)s:%(lineno)d: %(message)s"
 logging.basicConfig(level=logging.INFO, format=FORMAT, datefmt="%H:%M:%S")
@@ -26,7 +29,7 @@ logger.setLevel(logging.INFO)
 version = "1.0.0"
 
 
-class DREFS(StrEnum):
+class DATAREFS(StrEnum):
     GROUND_SPEED = "sim/flightmodel2/position/groundspeed"
     AGL = "sim/flightmodel/position/y_agl"
     TRACKING = "sim/cockpit2/gauges/indicators/ground_track_mag_pilot"  # The ground track of the aircraft in degrees magnetic
@@ -74,13 +77,10 @@ def now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class OOOIManager:
+class OOOIManager(XPWSAPIApp):
 
     def __init__(self, api, departure: str, arrival: str, callsign: str, logon: str, station: str, eta: datetime | None = None) -> None:
-        self.name = "OOOI"
-        self.ws = api
-
-        self.datarefs = {}
+        XPWSAPIApp.__init__(self, api=api)
 
         self.departure = departure
         self.arrival = arrival
@@ -109,11 +109,14 @@ class OOOIManager:
         self.datarefs = {path: self.ws.dataref(path) for path in self.get_dataref_names()}
         self.ws.add_callback(cbtype=xpwebapi.CALLBACK_TYPE.ON_DATAREF_UPDATE, callback=self.dataref_changed)
 
-    def run(self):
-        self.ws.connect()
-        self.ws.wait_connection()
-        self.ws.monitor_datarefs(datarefs=self.datarefs, reason=self.name)
-        self.ws.start()
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    def loop(self):
+        pass
 
     @property
     def oooi(self) -> OOOI | None:
@@ -136,14 +139,14 @@ class OOOIManager:
 
     @property
     def inited(self) -> bool:
-        return len([d for d in self.first if d is not None]) == len(DREFS)
+        return len([d for d in self.first if d is not None]) == len(DATAREFS)
 
     @property
     def pushback(self) -> bool:
         if not self.inited:
             return False
-        h = self.first.get(DREFS.HEADING)
-        t = self.first.get(DREFS.TRACKING)
+        h = self.first.get(DATAREFS.HEADING)
+        t = self.first.get(DATAREFS.TRACKING)
         if h > 270 and t < 90:
             t = t + 360
         elif h < 90 and t > 270:
@@ -160,7 +163,7 @@ class OOOIManager:
             self.last_eta = now()
 
     def get_dataref_names(self) -> set:
-        return [d.value for d in DREFS]
+        return [d.value for d in DATAREFS]
 
     def dataref_value(self, dataref: str):
         dref = self.datarefs.get(dataref)
@@ -168,8 +171,8 @@ class OOOIManager:
 
     @property
     def sim_time(self) -> datetime:
-        days = self.dataref_value(DREFS.DAYS)
-        secs = self.dataref_value(DREFS.ZULU_SECS)
+        days = self.dataref_value(DATAREFS.DAYS)
+        secs = self.dataref_value(DATAREFS.ZULU_SECS)
         return datetime.now(timezone.utc).replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0) + timedelta(days=days, seconds=secs)
 
     def report(self, display: bool = True) -> str:
@@ -251,7 +254,7 @@ class OOOIManager:
     def inital_state(self):
         if self.inited:
             return
-        for d in DREFS:
+        for d in DATAREFS:
             if d not in self.first or self.first.get(d) is None:
                 v = self.dataref_value(d)
                 if v is not None:
@@ -264,8 +267,8 @@ class OOOIManager:
         logger.debug("all dataref values received at least once, determining initial state..")
 
         # We have a first value for all variables, try to determine initial state
-        speed = self.first.get(DREFS.GROUND_SPEED)
-        agl = self.first.get(DREFS.AGL)
+        speed = self.first.get(DATAREFS.GROUND_SPEED)
+        agl = self.first.get(DATAREFS.AGL)
         # 1. Are we in the air?
         if agl > AIR_AGL_MARGIN and speed > AIR_SPEED_MARGIN:
             logger.debug("we are in the air")
@@ -342,8 +345,8 @@ class OOOIManager:
             return
 
         # For each state, check if there is a change:
-        speed = self.last[DREFS.GROUND_SPEED]
-        if dataref == DREFS.GROUND_SPEED:
+        speed = self.last[DATAREFS.GROUND_SPEED]
+        if dataref == DATAREFS.GROUND_SPEED:
             diff = speed - value
             if abs(diff) > STOPPED_SPEED_MARGIN:
                 self.speed_trend = -1 if diff < 0 else 1
@@ -362,8 +365,8 @@ class OOOIManager:
                             self._onblock = True
                             logger.debug("No OOOI, not moving, we're on block")
 
-        alt = self.last[DREFS.AGL]
-        if dataref == DREFS.AGL:
+        alt = self.last[DATAREFS.AGL]
+        if dataref == DATAREFS.AGL:
             diff = alt - value
             if abs(diff) > ALT_MARGIN:
                 self.alt_trend = -1 if diff < 0 else 1
@@ -372,12 +375,12 @@ class OOOIManager:
             alt = value
 
         if self.oooi == OOOI.OUT:  # we no longer at the gate/parked
-            if dataref == DREFS.AGL:
-                alt_diff = alt - self.last.get(DREFS.AGL)  # we took off, shoukd also check speed >> max_taxi_speed (~=60 km/h)
+            if dataref == DATAREFS.AGL:
+                alt_diff = alt - self.last.get(DATAREFS.AGL)  # we took off, shoukd also check speed >> max_taxi_speed (~=60 km/h)
                 if alt_diff > ALT_THRESHOLD_UP or alt > ALT_THRESHOLD_UP:
                     logger.debug(f"we climb, we're OFF ({alt}, {alt_diff})")
                     self.oooi = OOOI.OFF
-            if dataref == DREFS.GROUND_SPEED:
+            if dataref == DATAREFS.GROUND_SPEED:
                 if speed < STOPPED_SPEED_MARGIN:  # we're stopped, may be we were taxiing IN when we assumed we were taxiing out...
                     if self.how_long_waiting() < HOLD_MAX_TIME:
                         self.set_last_stop()
@@ -393,7 +396,7 @@ class OOOIManager:
                     self.last_stop = None
 
         if self.oooi == OOOI.OFF:  # we're flying
-            if dataref == DREFS.AGL:
+            if dataref == DATAREFS.AGL:
                 alt = value
                 if alt < ALT_THRESHOLD_DOWN:
                     reftime = now()
@@ -408,7 +411,7 @@ class OOOIManager:
                     self.oooi = OOOI.ON
 
         if self.oooi == OOOI.ON:  # We're back on the ground
-            if dataref == DREFS.GROUND_SPEED:
+            if dataref == DATAREFS.GROUND_SPEED:
                 speed = value
                 if speed < STOPPED_SPEED_MARGIN:  # we're stopped
                     reftime = now()
@@ -433,14 +436,48 @@ class OOOIManager:
         ws.unmonitor_datarefs(datarefs=self.datarefs, reason=self.name)
         self.ws.disconnect()
 
-
 if __name__ == "__main__":
-    ws = xpwebapi.ws_api()
-    oooi = OOOIManager(ws, departure="EBCI", arrival="EBBR", callsign="BEL034", logon="none", station="EBJA")
+
+    parser = argparse.ArgumentParser(description="Show simulator time")
+    parser.add_argument("--version", action="store_true", help="shows version information and exit")
+    parser.add_argument("--use-beacon", action="store_true", help="REMOTE USE ONLY: attempt to use X-Plane UDP beacon to discover network address")
+    parser.add_argument("--host", nargs=1, help="REMOTE USE ONLY: X-Plane hostname or ip address (default to localhost)")
+    parser.add_argument("--port", nargs="?", help="REMOTE USE ONLY: X-Plane web api TCP/IP port number (defatul to 8086)")
+    parser.add_argument("-v", "--verbose", action="store_true", help="shows more information")
+
+    args = parser.parse_args()
+
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+
+    if args.version:
+        print(version)
+        os._exit(0)
+
+    probe = None
+    api = None
+
+    if args.use_beacon:
+        probe = xpwebapi.beacon()
+        api = xpwebapi.ws_api()
+        probe.set_callback(api.beacon_callback)
+        probe.start_monitor()
+    else:
+        if args.host is not None and args.port is not None:
+            if args.verbose:
+                logger.info(f"api at {args.host}:{args.port}")
+            api = xpwebapi.ws_api(host=args.host, port=args.port)
+        else:
+            if args.verbose:
+                logger.info("api at localhost:8086")
+            api = xpwebapi.ws_api()
+
+    logger.debug("starting..")
+    app = OOOIManager(api, departure="EBCI", arrival="EBBR", callsign="BEL034", logon="none", station="EBJA")
+    app.set_eta(now() + timedelta(minutes=30))
     try:
-        oooi.set_eta(now() + timedelta(minutes=30))
-        oooi.run()
+        app.run()
     except KeyboardInterrupt:
         logger.warning("terminating..")
-        oooi.terminate()
+        app.terminate()
         logger.warning("..terminated")

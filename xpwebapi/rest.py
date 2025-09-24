@@ -416,7 +416,7 @@ class XPRestAPI(API):
         logger.error(f"rest_execute: {response}, {data}")
         return False
 
-    def dataref_value(self, dataref: Dataref, raw: bool = False, no_decode: bool = False) -> DatarefValueType:
+    def dataref_value(self, dataref: Dataref, raw: bool = False, no_decode: bool = False) -> DatarefValueType | None:
         """Get dataref value through REST API
 
         Value is not stored or cached.

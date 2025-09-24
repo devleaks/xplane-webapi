@@ -14,7 +14,7 @@ import os
 import sys
 import math
 import csv
-import threading
+import argparse
 from dataclasses import dataclass
 from enum import StrEnum
 from datetime import datetime, timezone
@@ -23,6 +23,7 @@ from typing import Dict, Tuple, Any, List
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 import xpwebapi
+from xpwsapp import XPWSAPIApp
 
 # Personal libraries
 from kml import to_kml
@@ -228,7 +229,7 @@ class EVENT(StrEnum):
 # ###############################
 # Data
 #
-class DREFS(StrEnum):
+class DATAREFS(StrEnum):
     ACF_ICAO = "sim/aircraft/view/acf_ICAO"
     ACF_TAILNUM = "sim/aircraft/view/acf_tailnum"
     FNRML_GEAR = "sim/flightmodel/forces/fnrml_gear"
@@ -252,11 +253,10 @@ class DREFS(StrEnum):
     VLS_VALUE = "toliss_airbus/pfdoutputs/general/VLS_value"
 
 
-class LandingRatingMonitor:
+class LandingRatingMonitor(XPWSAPIApp):
 
     def __init__(self, api) -> None:
-        self.name = "xgs"  # !
-        self.ws = api
+        XPWSAPIApp.__init__(self, api=api)
 
         # Runways
         self._all_runways = []
@@ -275,9 +275,6 @@ class LandingRatingMonitor:
         self._runway_ahead = False
         self._on_target_runway = False
 
-        # Monitored datarefs
-        self.datarefs = {path: self.ws.dataref(path) for path in self.get_dataref_names()}
-
         # Remeber dataref values
         self.first: Dict[str, Any] = {}
 
@@ -295,19 +292,6 @@ class LandingRatingMonitor:
         self._display_g = (1.0, 1.0)
         self.result = None
         self.monitoring = False
-
-        # Install process
-        self.ws.add_callback(cbtype=xpwebapi.CALLBACK_TYPE.ON_DATAREF_UPDATE, callback=self.dataref_changed)
-
-    def start(self):
-        ws.connect()
-        ws.wait_connection()
-        ws.monitor_datarefs(datarefs=self.datarefs, reason=self.name)
-        ws.start()
-
-    @property
-    def inited(self) -> bool:
-        return len([d for d in self.first if d is not None]) == len(DREFS)
 
     @property
     def state(self) -> ALTITUDE:
@@ -340,22 +324,18 @@ class LandingRatingMonitor:
         return (now() - self.snapshots[EVENT.TOUCHDOWN][0]).seconds
 
     def get_dataref_names(self) -> set:
-        return DREFS
-
-    def dataref_value(self, dataref: str):
-        dref = self.datarefs.get(dataref)
-        return dref.value if dref is not None else 0
+        return DATAREFS
 
     def init(self):
-        if self.inited:
+        if self.has_first_set:
             return
-        for d in DREFS:
+        for d in DATAREFS:
             if d not in self.first or self.first.get(d) is None:
                 v = self.dataref_value(d)
                 if v is not None:
                     self.first[d] = v
                     # logger.debug(f"first value for {d}={v}")
-        if not self.inited:
+        if not self.has_first_set:
             return
 
         # self.show_values("inited", first=True)
@@ -366,19 +346,19 @@ class LandingRatingMonitor:
         self._air_time = True
         self.shortlist_closest_runways()
 
-        if self.dataref_value(DREFS.Y_AGL) > 1000:
+        if self.dataref_value(DATAREFS.Y_AGL) > 1000:
             self.state = ALTITUDE.ALT_LOW
             logger.info(f".. state is {self.state}")  # this is the initial value
             return
 
         self.target_runway_ahead()
 
-        if self.dataref_value(DREFS.Y_AGL) > 300:
+        if self.dataref_value(DATAREFS.Y_AGL) > 300:
             self.state = ALTITUDE.ALT1000M
             logger.info(f".. state is {self.state}")  # this is the initial value
             return
 
-        if self.dataref_value(DREFS.Y_AGL) > LOW_ALTITUDE:
+        if self.dataref_value(DATAREFS.Y_AGL) > LOW_ALTITUDE:
             self.state = ALTITUDE.ALT300M
             logger.info(f".. state is {self.state}")  # this is the initial value
             return
@@ -393,7 +373,7 @@ class LandingRatingMonitor:
                 self.set_target_runway(self._currently_on_runway, orient=orient)
             self.state = ALTITUDE.GROUNDED
             moving = ", stopped"
-            gs = self.dataref_value(DREFS.GROUND_SPEED)
+            gs = self.dataref_value(DATAREFS.GROUND_SPEED)
             self._last_fast = gs > SPEED_SLOW
             if gs > 1:
                 moving = ", moving"
@@ -402,7 +382,7 @@ class LandingRatingMonitor:
             logger.info(f".. state is {self.state}{moving}")  # this is the initial value
             return
 
-        if self.dataref_value(DREFS.Y_AGL) > 0:
+        if self.dataref_value(DATAREFS.Y_AGL) > 0:
             self.state = ALTITUDE.ALT_LOW
             logger.info(f".. state is {self.state}")  # this is the initial value
 
@@ -411,7 +391,7 @@ class LandingRatingMonitor:
         logger.debug(f"{welcome}\n{'\n'.join([f'{d} = {values[d]}' for d in values])}")
 
     def on_the_ground(self) -> bool:
-        value = self.dataref_value(DREFS.GEARSTRUTCOMPRESSDIST_M)
+        value = self.dataref_value(DATAREFS.GEARSTRUTCOMPRESSDIST_M)
         if value is not None and type(value) is list:  # fetches whole array
             if value[2] > 0.01:
                 # logger.debug(f"gear compress: {value[1] }, {value[2] }")
@@ -420,7 +400,7 @@ class LandingRatingMonitor:
                 if EVENT.FRONTGEAR not in self.snapshots:
                     self.snapshot(EVENT.FRONTGEAR)
                 return True
-        value = self.dataref_value(DREFS.FNRML_GEAR)
+        value = self.dataref_value(DATAREFS.FNRML_GEAR)
         # if value != 0:
         #     logger.debug(f"gear normal: {value}")
         return value != 0
@@ -452,11 +432,11 @@ class LandingRatingMonitor:
         if dataref not in self.get_dataref_names():
             return  # not for me, should never happen
 
-        if not self.inited:
+        if not self.has_first_set:
             self.init()
             return
 
-        if dataref == DREFS.Y_AGL:  # altitude AGL, set self._altitude if ensured
+        if dataref == DATAREFS.Y_AGL:  # altitude AGL, set self._altitude if ensured
 
             if value > 1000:
                 self._air_time = True
@@ -505,7 +485,7 @@ class LandingRatingMonitor:
             return
 
         rwys = []
-        if dataref in [DREFS.LATITUDE, DREFS.LONGITUDE]:
+        if dataref in [DATAREFS.LATITUDE, DATAREFS.LONGITUDE]:
             rwys = self.on_runway()
 
             if self.state == ALTITUDE.ALT_LOW:
@@ -531,7 +511,7 @@ class LandingRatingMonitor:
                         # should check alt and ground speed
                         self.state = ALTITUDE.ALT_LOW  # go-around?
 
-        if dataref == DREFS.GROUND_SPEED:  # position
+        if dataref == DATAREFS.GROUND_SPEED:  # position
             if self.last_grounded and self._last_fast:
                 if value < SPEED_SLOW and not EVENT.SLOWDOWN in self.snapshots:
                     self.snapshot(EVENT.SLOWDOWN)  # ground speed less than 50km/h, brake is ok, we can exit runway
@@ -566,21 +546,21 @@ class LandingRatingMonitor:
                 self._bouncing = True
 
     def closest_orient(self, rwy: Runway) -> str:
-        lat = self.dataref_value(DREFS.LATITUDE)
-        lon = self.dataref_value(DREFS.LONGITUDE)
+        lat = self.dataref_value(DATAREFS.LATITUDE)
+        lon = self.dataref_value(DATAREFS.LONGITUDE)
         dle = distance(lat, lon, rwy.le_latitude_deg, rwy.le_longitude_deg)
         dhe = distance(lat, lon, rwy.he_latitude_deg, rwy.he_longitude_deg)
         return "le" if dle <= dhe else "he"
 
     def record_position(self):
-        lat = self.dataref_value(DREFS.LATITUDE)
-        lon = self.dataref_value(DREFS.LONGITUDE)
-        alt = self.dataref_value(DREFS.Y_AGL)
+        lat = self.dataref_value(DATAREFS.LATITUDE)
+        lon = self.dataref_value(DATAREFS.LONGITUDE)
+        alt = self.dataref_value(DATAREFS.Y_AGL)
         self._positions.append((now(), lat, lon, alt))
 
     def record_vspeed(self):
-        vs = self.dataref_value(DREFS.LOCAL_VY)
-        tt = self.dataref_value(DREFS.TRUE_THETA)
+        vs = self.dataref_value(DATAREFS.LOCAL_VY)
+        tt = self.dataref_value(DATAREFS.TRUE_THETA)
         val = vs * math.cos(tt * 0.0174533)  # vs projected vertically
         ts = now()
 
@@ -624,8 +604,8 @@ class LandingRatingMonitor:
         distthr = -1
         logger.debug(f"snapshot {event} around index {len(self._vspeeds)}, ts={now().isoformat()}")
         if self.runway is not None:
-            lat = self.dataref_value(DREFS.LATITUDE)
-            lon = self.dataref_value(DREFS.LONGITUDE)
+            lat = self.dataref_value(DATAREFS.LATITUDE)
+            lon = self.dataref_value(DATAREFS.LONGITUDE)
             rlat = 0
             rlon = 0
             if self.runway_orient == "he":
@@ -636,15 +616,15 @@ class LandingRatingMonitor:
                 rlon = self.runway.le_longitude_deg
             distthr = distance(lat, lon, rlat, rlon)
         vspeed = self._vspeeds[-1] if len(self._vspeeds) > 0 else None
-        self.snapshots[event] = (now(), distthr, {d: self.dataref_value(d) for d in DREFS}, vspeed)
+        self.snapshots[event] = (now(), distthr, {d: self.dataref_value(d) for d in DATAREFS}, vspeed)
         logger.debug(f"snapshot {event} taken")
 
     def shortlist_closest_runways(self, max_distance: float = CLOSE_AIRPORT, report: bool = False):
         # Preselect all airports in the vicinity of the aircraft (out of 44000 airports)
         # Short list is updated every ~10 minutes when aircraft is below 6000ft/2km
         # Finer scans in the short list (~20 airports, ~70 runways) will occur very fast.
-        lat = self.dataref_value(DREFS.LATITUDE)
-        lon = self.dataref_value(DREFS.LONGITUDE)
+        lat = self.dataref_value(DATAREFS.LATITUDE)
+        lon = self.dataref_value(DATAREFS.LONGITUDE)
 
         def dist(rwy) -> bool:
             close = False
@@ -674,9 +654,9 @@ class LandingRatingMonitor:
         # Make a bounding box of length ahead (meters) and 10% of ahead wide, in direction of tracking.
         # Threshold should be in bbox.
         #
-        lat = self.dataref_value(DREFS.LATITUDE)
-        lon = self.dataref_value(DREFS.LONGITUDE)
-        tracking = self.dataref_value(DREFS.GROUND_TRACK)
+        lat = self.dataref_value(DATAREFS.LATITUDE)
+        lon = self.dataref_value(DATAREFS.LONGITUDE)
+        tracking = self.dataref_value(DATAREFS.GROUND_TRACK)
         ahead_bbox = []
         halfwidth = ahead / 20
         latb, lonb = destination(lat, lon, tracking + 90, halfwidth)
@@ -726,8 +706,8 @@ class LandingRatingMonitor:
                 logger.warning(f"no target runway threshold found in list {[str(r) for r in self._runways_shortlist]}")
 
     def on_runway(self) -> List[Runway]:
-        lat = self.dataref_value(DREFS.LATITUDE)
-        lon = self.dataref_value(DREFS.LONGITUDE)
+        lat = self.dataref_value(DATAREFS.LATITUDE)
+        lon = self.dataref_value(DATAREFS.LONGITUDE)
         rwys = list(filter(lambda r: r.inside(lat, lon), self._runways_shortlist))
 
         if len(rwys) == 0:
@@ -752,7 +732,7 @@ class LandingRatingMonitor:
         return rwys
 
     def report(self):
-        def snap_dataref_value(s, dref: DREFS):
+        def snap_dataref_value(s, dref: DATAREFS):
             return s[2][dref]
 
         logger.info("\n")
@@ -771,8 +751,8 @@ class LandingRatingMonitor:
         # Approach speed
         snapa = self.snapshots.get(EVENT.APPROACH)
         if snapa is not None:
-            alt = snap_dataref_value(snapa, DREFS.Y_AGL)
-            speed = snap_dataref_value(snapa, DREFS.INDICATED_AIRSPEED)
+            alt = snap_dataref_value(snapa, DATAREFS.Y_AGL)
+            speed = snap_dataref_value(snapa, DATAREFS.INDICATED_AIRSPEED)
             logger.info(
                 f"Approach speed at {round(snapa[1])}m from runway: alt={round(alt)}, speed={round(speed, 1)}kt, {round(convert.kn_to_kmh(speed),1)}km/h, {round(convert.kn_to_ms(speed), 2)}m/s"
             )
@@ -782,8 +762,8 @@ class LandingRatingMonitor:
         # Alt/speed over runway edge
         snapi = self.snapshots.get(EVENT.ENTER_RWY)
         if snapi is not None:
-            alt = snap_dataref_value(snapi, DREFS.Y_AGL)
-            speed = snap_dataref_value(snapi, DREFS.INDICATED_AIRSPEED)
+            alt = snap_dataref_value(snapi, DATAREFS.Y_AGL)
+            speed = snap_dataref_value(snapi, DATAREFS.INDICATED_AIRSPEED)
             logger.info(
                 f"Approach speed entering runway ({round(snapi[1])}m from edge): alt={round(alt)}, speed={round(speed, 1)}kt, {round(convert.kn_to_kmh(speed),1)}km/h, {round(convert.kn_to_ms(speed), 2)}m/s"
             )
@@ -795,8 +775,8 @@ class LandingRatingMonitor:
         d0 = 0
         t0 = 0
         if snapt is not None:
-            alt = snap_dataref_value(snapt, DREFS.Y_AGL)
-            speed = snap_dataref_value(snapt, DREFS.INDICATED_AIRSPEED)
+            alt = snap_dataref_value(snapt, DATAREFS.Y_AGL)
+            speed = snap_dataref_value(snapt, DATAREFS.INDICATED_AIRSPEED)
             t0 = snapt[0]
             d0 = snapt[1]
             logger.info(
@@ -811,8 +791,8 @@ class LandingRatingMonitor:
                 dist = f" at {round(d)}m from threshold"
 
             offcenter = ""
-            acf_lat = snap_dataref_value(snapt, DREFS.LATITUDE)
-            acf_lon = snap_dataref_value(snapt, DREFS.LONGITUDE)
+            acf_lat = snap_dataref_value(snapt, DATAREFS.LATITUDE)
+            acf_lon = snap_dataref_value(snapt, DATAREFS.LONGITUDE)
             middle = Line(
                 start=Point(self.runway.le_latitude_deg, self.runway.le_longitude_deg), end=Point(self.runway.he_latitude_deg, self.runway.he_longitude_deg)
             )
@@ -840,14 +820,14 @@ class LandingRatingMonitor:
 
         snapf = self.snapshots.get(EVENT.FRONTGEAR)
         if snapf is not None:  # this is "optional", and for ToLiss aircrafts mainly
-            speed = snap_dataref_value(snapf, DREFS.INDICATED_AIRSPEED)
+            speed = snap_dataref_value(snapf, DATAREFS.INDICATED_AIRSPEED)
             logger.info(
                 f"Front wheel touchdown {round(snapf[1])}m from runway edge: speed={round(speed, 1)}kt, {round(convert.kn_to_kmh(speed),1)}km/h, {round(convert.kn_to_ms(speed), 2)}m/s"
             )
 
         snaps = self.snapshots.get(EVENT.SLOWDOWN)
         if snaps is not None:
-            speed = snap_dataref_value(snaps, DREFS.GROUND_SPEED)
+            speed = snap_dataref_value(snaps, DATAREFS.GROUND_SPEED)
             breaking = ""
             if snapt is not None:
                 d1 = snaps[1] - d0
@@ -860,14 +840,14 @@ class LandingRatingMonitor:
 
         snape = self.snapshots.get(EVENT.EXIT_RWY)
         if snape is not None:
-            speed = snap_dataref_value(snape, DREFS.GROUND_SPEED)
+            speed = snap_dataref_value(snape, DATAREFS.GROUND_SPEED)
             rwybusy = ""
             if snapt is not None:
                 t1 = (snape[0] - t0).seconds
                 rwybusy = f", on/over runway for {round(t1)}secs"
             logger.info(f"Exit runway at {snape[0].strftime('%H:%M:%S')}Z{rwybusy}")
-            alt = snap_dataref_value(snape, DREFS.Y_AGL)
-            gs = snap_dataref_value(snape, DREFS.GROUND_SPEED)
+            alt = snap_dataref_value(snape, DATAREFS.Y_AGL)
+            gs = snap_dataref_value(snape, DATAREFS.GROUND_SPEED)
             if alt > 5 and gs > 50:
                 logger.info(f"possible runway fly over ({'with' if snapt is not None else 'without'} touch down)")
         else:
@@ -909,17 +889,58 @@ class LandingRatingMonitor:
         self._display_g = (1.0, 1.0)
         logger.info("monitor was reset")
 
-    def terminate(self):
-        ws.unmonitor_datarefs(datarefs=self.datarefs, reason=self.name)
-        self.ws.disconnect()
+    def start(self):
+        pass
 
+    def stop(self):
+        pass
+
+    def loop(self):
+        pass
 
 if __name__ == "__main__":
-    ws = xpwebapi.ws_api()
-    xgs = LandingRatingMonitor(ws)
+
+    parser = argparse.ArgumentParser(description="Show simulator time")
+    parser.add_argument("--version", action="store_true", help="shows version information and exit")
+    parser.add_argument("--use-beacon", action="store_true", help="REMOTE USE ONLY: attempt to use X-Plane UDP beacon to discover network address")
+    parser.add_argument("--host", nargs=1, help="REMOTE USE ONLY: X-Plane hostname or ip address (default to localhost)")
+    parser.add_argument("--port", nargs="?", help="REMOTE USE ONLY: X-Plane web api TCP/IP port number (defatul to 8086)")
+    parser.add_argument("-v", "--verbose", action="store_true", help="shows more information")
+
+    args = parser.parse_args()
+
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+
+    if args.version:
+        print(version)
+        os._exit(0)
+
+    probe = None
+    api = None
+
+    if args.use_beacon:
+        probe = xpwebapi.beacon()
+        api = xpwebapi.ws_api()
+        probe.set_callback(api.beacon_callback)
+        probe.start_monitor()
+    else:
+        if args.host is not None and args.port is not None:
+            if args.verbose:
+                logger.info(f"api at {args.host}:{args.port}")
+            api = xpwebapi.ws_api(host=args.host, port=args.port)
+        else:
+            if args.verbose:
+                logger.info("api at localhost:8086")
+            api = xpwebapi.ws_api()
+
+    logger.debug("starting..")
+    app = LandingRatingMonitor(api)
+    # app = SimulatorTime()
+    # app.set_api(api)
     try:
-        xgs.start()
+        app.run()
     except KeyboardInterrupt:
         logger.warning("terminating..")
-        xgs.terminate()
+        app.terminate()
         logger.warning("..terminated")

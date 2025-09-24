@@ -9,9 +9,9 @@ Extrernal (to X-Plane) application to detect OOOI ACARS message changes and gene
 
 import logging
 import os
-from re import DEBUG
 import sys
-import threading
+import argparse
+from re import DEBUG
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Dict, Any, Tuple
@@ -22,6 +22,7 @@ from lat_lon_parser import to_deg_min
 from unitutil import convert
 
 import xpwebapi
+from xpwsapp import XPWSAPIApp
 
 FORMAT = "[%(asctime)s] %(levelname)s %(threadName)s %(filename)s:%(funcName)s:%(lineno)d: %(message)s"
 logging.basicConfig(level=logging.INFO, format=FORMAT, datefmt="%H:%M:%S")
@@ -34,7 +35,7 @@ logger.setLevel(logging.INFO)
 version = "1.0.0"
 
 
-class DREFS(StrEnum):
+class DATAREFS(StrEnum):
     DAYS = "sim/time/local_date_days"
     ZULU_SECS = "sim/time/zulu_time_sec"
     GROUND_SPEED = "sim/flightmodel2/position/groundspeed"
@@ -56,41 +57,23 @@ def now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class PositionReport:
+class PositionReport(XPWSAPIApp):
 
     def __init__(self, api, frequency: int, callsign: str, logon: str, station: str, eta: datetime | None = None) -> None:
-        self.name = type(self).__name__
-        self.ws = api
-
-        self.datarefs = {path: self.ws.dataref(path) for path in self.get_dataref_names()}
-        self._report_thread = threading.Thread(target=self.report_loop, name="ACARS Progress Report")
-        self._report_run = threading.Event()
+        XPWSAPIApp.__init__(self, api=api)
         self.frequency = frequency
 
-        self.ws.add_callback(cbtype=xpwebapi.CALLBACK_TYPE.ON_DATAREF_UPDATE, callback=self.dataref_changed)
-
     def get_dataref_names(self) -> set:
-        return DREFS
+        return DATAREFS
 
-    def dataref_changed(self, dataref, value):
-        self.datarefs[dataref].value = value
-
-    def dataref_value(self, dataref: str):
-        dref = self.datarefs.get(dataref)
-        return dref.value if dref is not None else 0
-
-    def run(self):
-        self._report_thread.start()
-        ws.connect()
-        ws.wait_connection()
-        ws.monitor_datarefs(datarefs=self.datarefs, reason=self.name)
-        self._report_thread.start()
-        ws.start()
-
-    def terminate(self):
-        self._report_run.set()
-        ws.unmonitor_datarefs(datarefs=self.datarefs, reason=self.name)
-        self.ws.disconnect()
+    def loop(self):
+        while not self.finish.is_set():
+            try:
+                print(self.report())
+                logger.debug(self.report())
+            except:
+                logger.warning("error producing report", exc_info=True)
+            self.finish.wait(self.frequency)
 
     def report(self) -> str:
         def f(dref: str, rnd: int = 0) -> int | float:
@@ -99,55 +82,81 @@ class PositionReport:
                 return int(val) if rnd == 0 else round(val, rnd)
             return 0
 
-        lat = self.dataref_value(DREFS.LATITUDE)
+        lat = self.dataref_value(DATAREFS.LATITUDE)
         ldeg, lmin = to_deg_min(lat)
-        latstr = f"{ldeg:02d}{lmin:04.1f}{'N' if ldeg >=0 else 'S'}"
-        lon = self.dataref_value(DREFS.LONGITUDE)
+        latstr = f"{int(ldeg):02d}{lmin:04.1f}{'N' if ldeg >=0 else 'S'}"
+        lon = self.dataref_value(DATAREFS.LONGITUDE)
         ldeg, lmin = to_deg_min(lon)
-        lonstr = f"{ldeg:03d}{lmin:04.1f}{'E' if ldeg >=0 else 'W'}"
+        lonstr = f"{int(ldeg):03d}{lmin:04.1f}{'E' if ldeg >=0 else 'W'}"
 
         zulustr = now().strftime("%H%M")
 
-        vs = self.dataref_value(DREFS.VS)
+        vs = self.dataref_value(DATAREFS.VS)
         vs = convert.ms_to_fpm(ms=vs)
         vs = round(vs/100) * 100
-        alt = self.dataref_value(DREFS.ALT)
+        alt = self.dataref_value(DATAREFS.ALT)
         if alt < 8000:
             altstr = f"{round(alt/10) * 10}"
         else:
             altstr = convert.meters_to_fl(convert.feet_to_meters(ft=alt))
 
         # find weather parameters for layer
-        wind_dir = int(self.dataref_value(DREFS.WINDDIR))
-        wind_speed = int(self.dataref_value(DREFS.WINDSPD))
-        sat = int(self.dataref_value(DREFS.AIR_TEMP))
+        wind_dir = int(self.dataref_value(DATAREFS.WINDDIR))
+        wind_speeds = self.dataref_value(DATAREFS.WINDSPD)
+        wind_speed = int(wind_speeds[0])
+        sat = int(self.dataref_value(DATAREFS.AIR_TEMP))
 
         return " ".join([
             "POSITION REPORT",
             f"PPOS:{latstr}/{lonstr} AT {zulustr}Z/{altstr}",
-            f"WIND {wind_dir}/{wind_speed} SAT {saturation}",
-            f"SPEED {f(DREFS.INDICATED_AIRSPEED)} GND SPEED {f(DREFS.GROUND_SPEED)} VERT SPEED {vs}FPM",
-            f"HDG {f(DREFS.HDG)} TRK {f(DREFS.TRK)}",
+            f"WIND {wind_dir}/{wind_speed} SAT {sat}",
+            f"SPEED {f(DATAREFS.INDICATED_AIRSPEED)} GND SPEED {f(DATAREFS.GROUND_SPEED)} VERT SPEED {vs}FPM",
+            f"HDG {f(DATAREFS.HDG)} TRK {f(DATAREFS.TRK)}",
             "PARTIAL AUTOGEN"
         ])
 
-    def report_loop(self):
-        loop = True
-        while loop:
-            try:
-                logger.debug(self.report())
-            except:
-                logger.warning("error producing report")
-            if self._report_run.wait(self.frequency):
-                loop = False
-
 
 if __name__ == "__main__":
-    ws = xpwebapi.ws_api()
-    pr = PositionReport(ws, frequency=5, callsign="BEL034", logon="none", station="EBJA")
+
+    parser = argparse.ArgumentParser(description="Show simulator time")
+    parser.add_argument("--version", action="store_true", help="shows version information and exit")
+    parser.add_argument("--use-beacon", action="store_true", help="REMOTE USE ONLY: attempt to use X-Plane UDP beacon to discover network address")
+    parser.add_argument("--host", nargs=1, help="REMOTE USE ONLY: X-Plane hostname or ip address (default to localhost)")
+    parser.add_argument("--port", nargs="?", help="REMOTE USE ONLY: X-Plane web api TCP/IP port number (defatul to 8086)")
+    parser.add_argument("-v", "--verbose", action="store_true", help="shows more information")
+
+    args = parser.parse_args()
+
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+
+    if args.version:
+        print(version)
+        os._exit(0)
+
+    probe = None
+    api = None
+
+    if args.use_beacon:
+        probe = xpwebapi.beacon()
+        api = xpwebapi.ws_api()
+        probe.set_callback(api.beacon_callback)
+        probe.start_monitor()
+    else:
+        if args.host is not None and args.port is not None:
+            if args.verbose:
+                logger.info(f"api at {args.host}:{args.port}")
+            api = xpwebapi.ws_api(host=args.host, port=args.port)
+        else:
+            if args.verbose:
+                logger.info("api at localhost:8086")
+            api = xpwebapi.ws_api()
+
+    logger.debug("starting..")
+    app = PositionReport(api, frequency=5, callsign="BEL034", logon="none", station="EBJA")
     try:
-        pr.run()
+        app.run()
     except KeyboardInterrupt:
         logger.warning("terminating..")
-        pr.terminate()
+        app.terminate()
         logger.warning("..terminated")
