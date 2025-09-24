@@ -93,7 +93,7 @@ class PositionReport(XPWSAPIApp):
 
         vs = self.dataref_value(DATAREFS.VS)
         vs = convert.ms_to_fpm(ms=vs)
-        vs = round(vs/100) * 100
+        vs = round(vs / 100) * 100
         alt = self.dataref_value(DATAREFS.ALT)
         if alt < 8000:
             altstr = f"{round(alt/10) * 10}"
@@ -106,16 +106,20 @@ class PositionReport(XPWSAPIApp):
         wind_speed = int(wind_speeds[0])
         sat = int(self.dataref_value(DATAREFS.AIR_TEMP))
 
-        return " ".join([
-            "POSITION REPORT",
-            f"PPOS:{latstr}/{lonstr} AT {zulustr}Z/{altstr}",
-            f"WIND {wind_dir}/{wind_speed} SAT {sat}",
-            f"SPEED {f(DATAREFS.INDICATED_AIRSPEED)} GND SPEED {f(DATAREFS.GROUND_SPEED)} VERT SPEED {vs}FPM",
-            f"HDG {f(DATAREFS.HDG)} TRK {f(DATAREFS.TRK)}",
-            "PARTIAL AUTOGEN"
-        ])
+        return " ".join(
+            [
+                "POSITION REPORT",
+                f"PPOS:{latstr}/{lonstr} AT {zulustr}Z/{altstr}",
+                f"WIND {wind_dir}/{wind_speed} SAT {sat}",
+                f"SPEED {f(DATAREFS.INDICATED_AIRSPEED)} GND SPEED {f(DATAREFS.GROUND_SPEED)} VERT SPEED {vs}FPM",
+                f"HDG {f(DATAREFS.HDG)} TRK {f(DATAREFS.TRK)}",
+                "PARTIAL AUTOGEN",
+            ]
+        )
 
 
+# ######################################################
+#
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Show simulator time")

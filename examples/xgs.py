@@ -253,7 +253,7 @@ class DATAREFS(StrEnum):
     VLS_VALUE = "toliss_airbus/pfdoutputs/general/VLS_value"
 
 
-class LandingRatingMonitor(XPWSAPIApp):
+class LandingMonitor(XPWSAPIApp):
 
     def __init__(self, api) -> None:
         XPWSAPIApp.__init__(self, api=api)
@@ -427,10 +427,7 @@ class LandingRatingMonitor(XPWSAPIApp):
             dataref ([type]): [description]
             value ([type]): [description]
         """
-        self.datarefs[dataref].value = value
-
-        if dataref not in self.get_dataref_names():
-            return  # not for me, should never happen
+        super().dataref_changed(dataref=dataref, value=value)
 
         if not self.has_first_set:
             self.init()
@@ -898,6 +895,9 @@ class LandingRatingMonitor(XPWSAPIApp):
     def loop(self):
         pass
 
+
+# ######################################################
+#
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Show simulator time")
@@ -936,8 +936,6 @@ if __name__ == "__main__":
 
     logger.debug("starting..")
     app = LandingRatingMonitor(api)
-    # app = SimulatorTime()
-    # app.set_api(api)
     try:
         app.run()
     except KeyboardInterrupt:

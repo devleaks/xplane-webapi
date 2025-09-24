@@ -27,6 +27,7 @@ DATAREFS = {
     "sim/time/local_time_sec",
 }
 
+
 class SimulatorTime(XPWSAPIApp):
     """Display simulator time and real time every 10 seconds.
 
@@ -34,7 +35,7 @@ class SimulatorTime(XPWSAPIApp):
 
     """
 
-    def __init__(self, api:xpwebapi.XPWebsocketAPI | None = None, frequency: float = 10.0) -> None:
+    def __init__(self, api: xpwebapi.XPWebsocketAPI | None = None, frequency: float = 10.0) -> None:
         XPWSAPIApp.__init__(self, api=api)
         self.frequency = frequency
 
@@ -58,12 +59,16 @@ class SimulatorTime(XPWSAPIApp):
         if zulu:
             secs = self.dataref_value("sim/time/zulu_time_sec")
             if days is not None and secs is not None:
-                return datetime.now(timezone.utc).replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0) + timedelta(days=int(days), seconds=float(secs))
+                return datetime.now(timezone.utc).replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0) + timedelta(
+                    days=int(days), seconds=float(secs)
+                )
             logger.warning("no dataref values, no simulator zulu time")
         else:
             secs = self.dataref_value("sim/time/local_time_sec")
             if days is not None and secs is not None:
-                return datetime.now().astimezone().replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0) + timedelta(days=int(days), seconds=float(secs))
+                return datetime.now().astimezone().replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0) + timedelta(
+                    days=int(days), seconds=float(secs)
+                )
             logger.warning("no dataref values, no simulator local time")
         return datetime.now(timezone.utc)
 
@@ -75,6 +80,9 @@ class SimulatorTime(XPWSAPIApp):
     def sim_local_time(self) -> datetime:
         return self.sim_time()
 
+
+# ######################################################
+#
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Show simulator time")
@@ -121,4 +129,3 @@ if __name__ == "__main__":
         logger.warning("terminating..")
         app.terminate()
         logger.warning("..terminated")
-

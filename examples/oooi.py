@@ -181,6 +181,7 @@ class OOOIManager(XPWSAPIApp):
         Returns:
             str: string with all values
         """
+
         def strfdelta(tdelta):
             ret = ""
             if tdelta.days > 0:
@@ -335,10 +336,7 @@ class OOOIManager(XPWSAPIApp):
         return howlong.seconds
 
     def dataref_changed(self, dataref, value):
-        self.datarefs[dataref].value = value
-
-        if dataref not in self.get_dataref_names():
-            return  # not for me, should never happen
+        super().dataref_changed(dataref=dataref, value=value)
 
         if not self.inited:
             self.inital_state()
@@ -436,6 +434,9 @@ class OOOIManager(XPWSAPIApp):
         ws.unmonitor_datarefs(datarefs=self.datarefs, reason=self.name)
         self.ws.disconnect()
 
+
+# ######################################################
+#
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Show simulator time")

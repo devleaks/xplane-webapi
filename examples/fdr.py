@@ -19,7 +19,6 @@ import argparse
 import datetime
 from typing import Dict
 from time import sleep
-import traceback
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -188,8 +187,6 @@ class FDR(XPWSAPIApp):
         return base + optional + "\n"
 
     def loop(self):
-        print(">>>>>>>>>>> STARTED")
-        traceback.print_stack()
         r = 100000
         if REPORT_FREQUENCY > 0:
             r = int(self.frequency if self.frequency > REPORT_FREQUENCY else REPORT_FREQUENCY / self.frequency)
@@ -204,7 +201,8 @@ class FDR(XPWSAPIApp):
         logger.info("FDR writer stopped")
 
     def dataref_changed(self, dataref, value):
-        self.datarefs[dataref].value = value
+        super().dataref_changed(dataref=dataref, value=value)
+
         if not self.header_ok:
             if dataref in HEADER:
                 self.header[dataref] = True
@@ -236,6 +234,8 @@ class FDR(XPWSAPIApp):
             self.file = None
 
 
+# ######################################################
+#
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Show simulator time")

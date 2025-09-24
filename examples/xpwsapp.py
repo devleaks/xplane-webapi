@@ -24,9 +24,10 @@ class XPWSAPIApp(ABC):
     Template application using X-Plane Websocket API python wrapper
 
     """
+
     version = "1.0.0"
 
-    def __init__(self, api:xpwebapi.XPWebsocketAPI | None = None) -> None:
+    def __init__(self, api: xpwebapi.XPWebsocketAPI | None = None) -> None:
         self.name = type(self).__name__
         self.ws = api
 
@@ -34,7 +35,7 @@ class XPWSAPIApp(ABC):
         self.thread = threading.Thread(target=self.loop, name=self.name)
         self.finish = threading.Event()
 
-    def set_api(self, api:xpwebapi.XPWebsocketAPI):
+    def set_api(self, api: xpwebapi.XPWebsocketAPI):
         self.ws = api
 
     @property
@@ -50,6 +51,8 @@ class XPWSAPIApp(ABC):
         return dref.value if dref is not None else None
 
     def dataref_changed(self, dataref, value):
+        if dataref not in self.get_dataref_names():
+            return
         self.datarefs[dataref].value = value
 
     def run(self):

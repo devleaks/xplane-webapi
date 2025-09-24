@@ -497,6 +497,7 @@ class Dataref:
         try:
             value = value_bytes.decode(encoding)
             value = value.replace("\u0000", "")  # remove trailing 0 (bytes with value 0)
+            value = value.replace("\x00", "")  # remove trailing 0 (bytes with value 0)
             self._encoding = encoding
             return value
         except:
