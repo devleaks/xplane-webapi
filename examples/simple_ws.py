@@ -37,6 +37,9 @@ ws.wait_connection()
 dataref = ws.dataref("sim/cockpit2/clock_timer/local_time_seconds")
 ws.monitor_dataref(dataref)
 
+arrdref = ws.dataref("sim/weather/aircraft/wind_direction_degt[0]")
+ws.monitor_dataref(arrdref)
+
 ws.monitor_command_active(ws.command("sim/map/show_current"))
 
 print("\n\nplease activate map in X-Plane with sim/map/show_current (usually key stroke 'm')\n")

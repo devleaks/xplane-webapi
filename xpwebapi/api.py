@@ -486,9 +486,9 @@ class Dataref:
             logger.warning("value type is not data")
             return None
         value_bytes = self.value
-        value_bytes_stripped = value_bytes.rstrip(b"\x00")  # remove trailing 0 (bytes with value 0)
-        if len(value_bytes_stripped) > 0:
-            value_bytes = value_bytes_stripped
+        if value_bytes is None:
+            logger.debug("no value")
+            return None
         if type(value_bytes) is not bytes:
             logger.warning("value is not bytes")
             return None

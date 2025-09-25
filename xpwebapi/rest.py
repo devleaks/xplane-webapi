@@ -296,7 +296,14 @@ class XPRestAPI(API):
         """Rebuild dataref idenfier index"""
         if len(self._dataref_by_id) > 0:
             if self.all_datarefs.has_data:
-                self._dataref_by_id = {d.ident: d for d in self._dataref_by_id.values()}
+                newdict = dict()
+                for d in self._dataref_by_id.values():
+                    if type(d) is Dataref:
+                        newdict[d.ident] = d
+                    elif type(d) is list and len(d) > 0:
+                        t = d[0]  # ident of first element, same for all elements in the list
+                        newdict[t.ident] = d
+                self._dataref_by_id = newdict
                 logger.info("dataref ids rebuilt")
                 return
             logger.warning("no data to rebuild dataref ids")
