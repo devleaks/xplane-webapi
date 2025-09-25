@@ -37,8 +37,11 @@ ws.wait_connection()
 dataref = ws.dataref("sim/cockpit2/clock_timer/local_time_seconds")
 ws.monitor_dataref(dataref)
 
-arrdref = ws.dataref("sim/weather/aircraft/wind_direction_degt[0]")
-ws.monitor_dataref(arrdref)
+arrdrefall = ws.dataref("sim/weather/region/wind_altitude_msl_m") # does not change a lot when not moving
+ws.monitor_dataref(arrdrefall)
+
+arrdref1 = ws.dataref("sim/weather/aircraft/wind_direction_degt[0]")
+ws.monitor_dataref(arrdref1)
 
 ws.monitor_command_active(ws.command("sim/map/show_current"))
 

@@ -473,6 +473,10 @@ class Dataref:
         if self.auto_save:
             self.write()
 
+    def get_value(self):
+        """Return current value of dataref in local application"""
+        return self._new_value if self._new_value is not None else self.api.dataref_value(self)
+
     def get_string_value(self, encoding: str) -> str | None:
         """Decodes current dataref value and replaces it with the decoded string value
 
@@ -485,7 +489,8 @@ class Dataref:
         if self.value_type not in ["data"]:
             logger.warning("value type is not data")
             return None
-        value_bytes = self.value
+        # https://stackoverflow.com/questions/1021464/how-to-call-a-property-of-the-base-class-if-this-property-is-being-overwritten-i
+        value_bytes = Dataref.value.fget(self)  # make sure we call OUT .value property (if overwritten)
         if value_bytes is None:
             logger.debug("no value")
             return None
