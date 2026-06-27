@@ -13,9 +13,11 @@ See [X-Plane Web API](https://developer.x-plane.com/article/x-plane-web-api/).
 pip install 'xpwebapi @ git+https://github.com/devleaks/xplane-webapi.git'
 ```
 
-For development, add option `dev`:
+For development, clone the repository and sync the development dependency group:
 
 
 ```sh
-pip install 'xpwebapi[dev] @ git+https://github.com/devleaks/xplane-webapi.git'
+git clone https://github.com/devleaks/xplane-webapi.git
+cd xplane-webapi
+uv sync
 ```

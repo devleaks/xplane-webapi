@@ -204,10 +204,10 @@ class GeoJSONIO:
     # Simple text/dict manipulation to present geographic geometries in GeoJSON for display on geojson.io.
     # Later: Add coloring
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.collection = []
 
-    def add(self, feature: dict):
+    def add(self, feature: dict) -> None:
         self.collection.append(feature)
 
     def feature_collection(self) -> dict:
@@ -217,7 +217,7 @@ class GeoJSONIO:
         }
 
     @staticmethod
-    def point(lat: float, lon: float):
+    def point(lat: float, lon: float) -> dict:
         # "properties": {
         #   "marker-color": "#e32400",
         #   "marker-size": "medium",
@@ -233,7 +233,7 @@ class GeoJSONIO:
         }
 
     @staticmethod
-    def line(lat1: float, lon1: float, lat2: float, lon2: float):
+    def line(lat1: float, lon1: float, lat2: float, lon2: float) -> dict:
         # "properties": {
         #   "stroke": "#ff40ff",
         #   "stroke-width": 2,
@@ -249,7 +249,7 @@ class GeoJSONIO:
         }
 
     @staticmethod
-    def polygon(points: List[Tuple[float, float]]):
+    def polygon(points: List[Tuple[float, float]]) -> dict:
         # "properties": {
         #   "stroke": "#fffb00",
         #   "stroke-width": 2,

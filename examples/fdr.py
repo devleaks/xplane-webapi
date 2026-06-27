@@ -17,7 +17,7 @@ import sys
 import logging
 import argparse
 import datetime
-from typing import Dict
+from typing import Any, Dict
 from time import sleep
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
@@ -100,7 +100,7 @@ REPORT_FREQUENCY = 20.0  # seconds, 0 to disable
 
 class FDR(XPWSAPIApp):
 
-    def __init__(self, api, filename: str = FDR_FILENAME, frequency: float = WRITE_FREQUENCY) -> None:
+    def __init__(self, api: xpwebapi.XPWebsocketAPI, filename: str = FDR_FILENAME, frequency: float = WRITE_FREQUENCY) -> None:
         XPWSAPIApp.__init__(self, api=api)
 
         self.filename = filename
@@ -118,7 +118,7 @@ class FDR(XPWSAPIApp):
     def get_dataref_names(self) -> set:
         return HEADER | set(FDR_DATA) | set(FDR_OPTIONAL)
 
-    def dataref_value(self, dataref: str, is_string: bool = False, rounding: int | None = None):
+    def dataref_value(self, dataref: str, is_string: bool = False, rounding: int | None = None) -> Any:
         dref = self.datarefs.get(dataref)
         if dref is None:
             logger.warning(f"dataref {dataref} not found")
@@ -130,7 +130,7 @@ class FDR(XPWSAPIApp):
             return round(dref.value, rounding)
         return dref.value
 
-    def print_header(self):
+    def print_header(self) -> None:
         with open(self.filename, "w") as fp:
             # FDR Header
             print("A\r4\n", file=fp)  # note A may not be visible on Apple computers because of simple carriage return after it (no new line)
@@ -186,7 +186,7 @@ class FDR(XPWSAPIApp):
         optional = "" if len(self.optional_datarefs) == 0 else ", " + ", ".join([f"{self.dataref_value(d)}" for d in self.optional_datarefs.keys()])
         return base + optional + "\n"
 
-    def loop(self):
+    def loop(self) -> None:
         r = 100000
         if REPORT_FREQUENCY > 0:
             r = int(self.frequency if self.frequency > REPORT_FREQUENCY else REPORT_FREQUENCY / self.frequency)
@@ -200,7 +200,7 @@ class FDR(XPWSAPIApp):
             sleep(self.frequency)
         logger.info("FDR writer stopped")
 
-    def dataref_changed(self, dataref, value):
+    def dataref_changed(self, dataref: str, value: Any) -> None:
         super().dataref_changed(dataref=dataref, value=value)
 
         if not self.header_ok:
@@ -214,7 +214,7 @@ class FDR(XPWSAPIApp):
             if dataref == "sim/cockpit2/clock_timer/zulu_time_seconds":
                 self.lines.append(self.print_line())
 
-    def start(self):
+    def start(self) -> None:
         if not self.header_ok:
             return
         # writing header
@@ -228,7 +228,7 @@ class FDR(XPWSAPIApp):
         self.lines = []
         super().start()
 
-    def stop(self):
+    def stop(self) -> None:
         if self.file is not None:
             self.file.close()
             self.file = None

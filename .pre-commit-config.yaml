@@ -1,0 +1,30 @@
+default_stages: [pre-commit]
+fail_fast: true
+
+repos:
+  - repo: local
+    hooks:
+      - id: quality-check
+        name: quality check
+        entry: uv run python tools/quality.py check
+        language: system
+        pass_filenames: false
+
+      - id: detect-secrets-baseline
+        name: detect-secrets baseline
+        entry: uv run detect-secrets-hook --baseline .secrets.baseline
+        language: system
+
+      - id: lizard-report
+        name: lizard report
+        entry: uv run lizard xpwebapi -i -1
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: cohesion-report
+        name: cohesion report
+        entry: uv run cohesion -d xpwebapi
+        language: system
+        pass_filenames: false
+        types: [python]

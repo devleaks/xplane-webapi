@@ -1,15 +1,37 @@
 """X-Plane Web API access through REST API"""
 
+from __future__ import annotations
+
 import logging
 import base64
+from dataclasses import dataclass
 from datetime import timedelta
-from typing import List
+from threading import Lock
+from types import TracebackType
+from typing import TYPE_CHECKING, Self
 from enum import Enum
 
-import requests
+import httpx
 from natsort import natsorted
 
-from .api import CONNECTION_STATUS, DATAREF_DATATYPE, API, Dataref, DatarefMeta, Command, CommandMeta, Cache, webapi_logger, DatarefValueType
+from .api import (
+    CONNECTION_STATUS,
+    DATAREF_DATATYPE,
+    API,
+    APIResult,
+    Command,
+    CommandCache,
+    CommandMeta,
+    Dataref,
+    DatarefCache,
+    DatarefMeta,
+    DatarefReadResult,
+    webapi_logger,
+)
+from .retry import RetryConfig, sleep_before_retry
+
+if TYPE_CHECKING:
+    from .beacon import BeaconData
 
 # local logging
 logger = logging.getLogger(__name__)
@@ -25,6 +47,73 @@ V1_CAPABILITIES = {"api": {"versions": ["v1"]}, "x-plane": {"version": "12.1.1"}
 # When accessing API from remote host, this is the default port number for the **proxy** to X-Plane standard :8086 port.
 # Can be changed when calling set_network_from_beacon_data()
 PROXY_TCP_PORT = 8080
+
+XP_SUPER_MIN_VERSION = 121010
+
+REST_HEADERS = {"Accept": "application/json", "Content-Type": "application/json"}
+
+
+@dataclass(frozen=True)
+class _RestClientPoolKey:
+    max_connections: int | None
+    max_keepalive_connections: int | None
+    keepalive_expiry: float | None
+    timeout: float | None
+
+
+@dataclass
+class _RestClientPoolEntry:
+    client: httpx.Client
+    references: int = 0
+
+
+class _RestClientPool:
+    _clients: dict[_RestClientPoolKey, _RestClientPoolEntry] = {}
+    _lock = Lock()
+
+    @classmethod
+    def acquire(cls, key: _RestClientPoolKey) -> httpx.Client:
+        with cls._lock:
+            entry = cls._clients.get(key)
+            if entry is None:
+                entry = _RestClientPoolEntry(client=_make_http_client(key))
+                cls._clients[key] = entry
+            entry.references = entry.references + 1
+            return entry.client
+
+    @classmethod
+    def release(cls, key: _RestClientPoolKey) -> None:
+        client: httpx.Client | None = None
+        with cls._lock:
+            entry = cls._clients.get(key)
+            if entry is None:
+                return
+            entry.references = entry.references - 1
+            if entry.references <= 0:
+                client = entry.client
+                del cls._clients[key]
+        if client is not None:
+            client.close()
+
+
+def _make_http_client(key: _RestClientPoolKey) -> httpx.Client:
+    limits = None
+    if key.max_connections is not None or key.max_keepalive_connections is not None or key.keepalive_expiry is not None:
+        limits = httpx.Limits(
+            max_connections=key.max_connections,
+            max_keepalive_connections=key.max_keepalive_connections,
+            keepalive_expiry=key.keepalive_expiry,
+        )
+    timeout = httpx.Timeout(key.timeout) if key.timeout is not None else None
+    if limits is None and timeout is None:
+        return httpx.Client(headers=REST_HEADERS)
+    if key.timeout is not None:
+        if limits is None:
+            return httpx.Client(headers=REST_HEADERS, timeout=timeout)
+        return httpx.Client(headers=REST_HEADERS, limits=limits, timeout=timeout)
+    if limits is not None:
+        return httpx.Client(headers=REST_HEADERS, limits=limits)
+    return httpx.Client(headers=REST_HEADERS)
 
 
 # REST KEYWORDS
@@ -67,29 +156,71 @@ class XPRestAPI(API):
         [X-Plane Web API — REST API](https://developer.x-plane.com/article/x-plane-web-api/#REST_API)
     """
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8086, api: str = "/api", api_version: str = "v1", use_cache: bool = False) -> None:
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8086,
+        api: str = "/api",
+        api_version: str = "v1",
+        use_cache: bool = False,
+        retry_attempts: int = 1,
+        retry_backoff: float = 0.0,
+        retry_backoff_max: float = 5.0,
+        pool_connections: bool = False,
+        max_connections: int | None = None,
+        max_keepalive_connections: int | None = None,
+        keepalive_expiry: float | None = None,
+        timeout: float | None = None,
+    ) -> None:
         API.__init__(self, host=host, port=port, api=api, api_version=api_version)
         self._capabilities = {}
+        self.retry_config = RetryConfig(attempts=retry_attempts, backoff=retry_backoff, max_backoff=retry_backoff_max)
+        self._session_pool_key = (
+            _RestClientPoolKey(
+                max_connections=max_connections,
+                max_keepalive_connections=max_keepalive_connections,
+                keepalive_expiry=keepalive_expiry,
+                timeout=timeout,
+            )
+            if pool_connections
+            else None
+        )
+        self._session_closed = False
 
         self._first_try = True
         self._running_time = Dataref(path=RUNNING_TIME, api=self)  # cheating, side effect, works for rest api only, do not force!
 
         # Caches ids for all known datarefs and commands
         self._should_use_cache = use_cache  # desired use of cache, not actual one in _use_cache
-        self.all_datarefs: Cache | None = None
-        self.all_commands: Cache | None = None
+        self.all_datarefs: DatarefCache | None = None
+        self.all_commands: CommandCache | None = None
 
         self._last_updated = 0
         self._warning_count = 0
         self._unreach_count = 0
         self._dataref_by_id = {}  # {dataref-id: Dataref}
 
-        self.session = requests.Session()
-        # Install session here:
-        # examples:
-        # self.session.auth = ('user', 'password')
-        self.session.headers["Accept"] = "application/json"
-        self.session.headers["Content-Type"] = "application/json"
+        self.session = (
+            _RestClientPool.acquire(self._session_pool_key)
+            if self._session_pool_key is not None
+            else _make_http_client(_RestClientPoolKey(None, None, None, None))
+        )
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, _exc_type: type[BaseException] | None, _exc: BaseException | None, _tb: TracebackType | None) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Close the underlying HTTP session."""
+        if self._session_closed:
+            return
+        self._session_closed = True
+        if self._session_pool_key is None:
+            self.session.close()
+        else:
+            _RestClientPool.release(self._session_pool_key)
 
     @property
     def use_cache(self) -> bool:
@@ -137,34 +268,42 @@ class XPRestAPI(API):
         if self._first_try:
             logger.info(f"trying to connect to {CHECK_API_URL}..")
             self._first_try = False
-        try:
-            # Relies on the fact that first version is always provided.
-            # Later verion offer alternative ot detect API
-            self.inc("get")
-            response = self.session.get(CHECK_API_URL)
-            webapi_logger.info(f"GET {CHECK_API_URL}: {response}")
-            if response.status_code == 200:
-                if self._unreach_count > 0:
-                    logger.info("rest api reachable")
-                    self._unreach_count = 0
-                self.status = CONNECTION_STATUS.REST_API_REACHABLE
-                return True
-        except requests.exceptions.ConnectionError:
-            if self._warning_count % 20 == 0:
-                logger.warning("api unreachable, X-Plane may be not running")
+        for attempt in range(self.retry_config.attempts):
+            try:
+                # Relies on the fact that first version is always provided.
+                # Later version offers alternatives to detect API.
+                self.inc("get")
+                response = self.session.get(CHECK_API_URL)
+                webapi_logger.info(f"GET {CHECK_API_URL}: {response}")
+                if response.status_code == 200:
+                    if self._unreach_count > 0:
+                        logger.info("rest api reachable")
+                        self._unreach_count = 0
+                    self.status = CONNECTION_STATUS.REST_API_REACHABLE
+                    return True
+                self.status = CONNECTION_STATUS.REST_API_NOT_REACHABLE
+                self._unreach_count = self._unreach_count + 1
+            except httpx.ConnectError:
+                if self._warning_count % 20 == 0:
+                    logger.warning("api unreachable, X-Plane may be not running")
                 self.status = CONNECTION_STATUS.REST_API_NOT_REACHABLE
                 self._warning_count = self._warning_count + 1
+                self._unreach_count = self._unreach_count + 1
+            if attempt < self.retry_config.attempts - 1:
+                sleep_before_retry(self.retry_config, attempt)
         return False
 
     @property
     def has_data(self) -> bool:
         res = ""
-        d = self.all_datarefs is not None and self.all_datarefs.has_data
-        if d:
-            res = res + f"loaded {self.all_datarefs.count} datarefs metadata"
-        c = self.all_commands is not None and self.all_commands.has_data
-        if d:
-            res = res + f", loaded {self.all_commands.count} commands metadata"
+        adr = self.all_datarefs
+        d = adr is not None and adr.has_data
+        if d and adr is not None:
+            res = res + f"loaded {adr.count} datarefs metadata"
+        acm = self.all_commands
+        c = acm is not None and acm.has_data
+        if c and acm is not None:
+            res = res + f", loaded {acm.count} commands metadata"
         logger.debug(res)
         return d and c
 
@@ -193,7 +332,7 @@ class XPRestAPI(API):
                     logger.debug(f"capabilities: {self._capabilities}")
                     return self._capabilities
                 logger.error(f"capabilities at {self.rest_url + '/datarefs/count'}: response={response.status_code}")
-            except:
+            except Exception:
                 logger.error("capabilities", exc_info=True)
         else:
             logger.error("no connection")
@@ -205,7 +344,8 @@ class XPRestAPI(API):
         a = self._capabilities.get("x-plane")
         if a is None:
             return None
-        return a.get("version")
+        v = a.get("version")
+        return str(v) if v is not None else None
 
     def set_api_version(self, api_version: str | None = None):
         """Set API version
@@ -231,8 +371,8 @@ class XPRestAPI(API):
                     logger.error("cannot determine api, api not set")
                     return
                 sorted_apis = natsorted(api_versions, reverse=True)
-                api = sorted_apis[0]  # takes the latest one, hoping it is the latest in time...
-                logger.info(f"selected api {api} ({sorted_apis})")
+                api_version = sorted_apis[0]  # takes the latest one, hoping it is the latest in time...
+                logger.info(f"selected api {api_version} ({sorted_apis})")
             if api_version in api_versions:
                 self.version = api_version
                 self._api_version = f"/{api_version}"
@@ -266,13 +406,13 @@ class XPRestAPI(API):
                         return
                 else:
                     logger.warning(f"no value for {RUNNING_TIME}")
-        self.all_datarefs = Cache(self)
-        self.all_datarefs.load("/datarefs")
+        self.all_datarefs = DatarefCache(self)
+        self.all_datarefs.load()
         if save:
             self.all_datarefs.save("webapi-datarefs.json")
-        self.all_commands = Cache(self)
+        self.all_commands = CommandCache(self)
         if self.version == "v2":  # >
-            self.all_commands.load("/commands")
+            self.all_commands.load()
             if save:
                 self.all_commands.save("webapi-commands.json")
         currtime = self._running_time.value
@@ -285,7 +425,8 @@ class XPRestAPI(API):
             if self._use_cache:
                 logger.info("using caches")
         logger.info(
-            f"dataref cache ({self.all_datarefs.count}) and command cache ({self.all_commands.count}) reloaded, sim uptime {str(timedelta(seconds=int(self.uptime)))}"
+            f"dataref cache ({self.all_datarefs.count}) and command cache ({self.all_commands.count})"
+            f" reloaded, sim uptime {str(timedelta(seconds=int(self.uptime)))}"
         )
 
     def invalidate_caches(self):
@@ -297,7 +438,8 @@ class XPRestAPI(API):
     def rebuild_dataref_ids(self):
         """Rebuild dataref idenfier index"""
         if len(self._dataref_by_id) > 0:
-            if self.all_datarefs.has_data:
+            adr = self.all_datarefs
+            if adr is not None and adr.has_data:
                 newdict = dict()
                 for d in self._dataref_by_id.values():
                     if type(d) is Dataref:
@@ -341,28 +483,41 @@ class XPRestAPI(API):
             metadata = respjson[REST_KW.DATA.value]
             if len(metadata) > 0:
                 m0 = metadata[0]
-                obj._cached_meta = Cache.meta(**m0)
-                return obj._cached_meta
+                if isinstance(obj, Dataref):
+                    m = DatarefCache.meta(**m0)
+                    obj._cached_meta = m
+                else:
+                    m = CommandCache.meta(**m0)
+                    obj._cached_meta = m
+                return m
         logger.error(f"{obj_type} {obj.path} could not get meta data through REST API")
         return None
 
     def get_dataref_meta_by_name(self, path: str) -> DatarefMeta | None:
         """Get dataref meta data by dataref name"""
-        return self.all_datarefs.get_by_name(path) if self.all_datarefs is not None else None
+        if self.all_datarefs is not None:
+            return self.all_datarefs.get_by_name(path)
+        return None
 
     def get_dataref_meta_by_id(self, ident: int) -> DatarefMeta | None:
         """Get dataref meta data by dataref identifier"""
-        return self.all_datarefs.get_by_id(ident) if self.all_datarefs is not None else None
+        if self.all_datarefs is not None:
+            return self.all_datarefs.get_by_id(ident)
+        return None
 
     def get_command_meta_by_name(self, path: str) -> CommandMeta | None:
         """Get command meta data by command path"""
-        return self.all_commands.get_by_name(path) if self.all_commands is not None else None
+        if self.all_commands is not None:
+            return self.all_commands.get_by_name(path)
+        return None
 
     def get_command_meta_by_id(self, ident: int) -> CommandMeta | None:
         """Get command meta data by command identifier"""
-        return self.all_commands.get_by_id(ident) if self.all_commands is not None else None
+        if self.all_commands is not None:
+            return self.all_commands.get_by_id(ident)
+        return None
 
-    def write_dataref(self, dataref: Dataref) -> bool | int:
+    def write_dataref(self, dataref: Dataref) -> APIResult:
         """Write single dataref value through REST API
 
         Returns:
@@ -396,11 +551,11 @@ class XPRestAPI(API):
             data = response.json()
             logger.debug(f"result: {data}")
             return True
-        webapi_logger.info(f"ERROR {dataref.path}: {response} {response.reason} {response.text}")
-        logger.error(f"rest_write: {response} {response.reason} {response.text}")
+        webapi_logger.info(f"ERROR {dataref.path}: {response} {response.reason_phrase} {response.text}")
+        logger.error(f"rest_write: {response} {response.reason_phrase} {response.text}")
         return False
 
-    def execute_command(self, command: Command, duration: float = 0.0) -> bool | int:
+    def execute_command(self, command: Command, duration: float = 0.0) -> APIResult:
         """Executes Command through REST API
 
         Returns:
@@ -424,11 +579,11 @@ class XPRestAPI(API):
         if response.status_code == 200:
             logger.debug(f"result: {data}")
             return True
-        webapi_logger.info(f"ERROR {command.path}: {response} {response.reason} {response.text}")
+        webapi_logger.info(f"ERROR {command.path}: {response} {response.reason_phrase} {response.text}")
         logger.error(f"rest_execute: {response}, {data}")
         return False
 
-    def dataref_value(self, dataref: Dataref, raw: bool = False, no_decode: bool = False) -> DatarefValueType | None:
+    def dataref_value(self, dataref: Dataref, raw: bool = False, no_decode: bool = False) -> DatarefReadResult:
         """Get dataref value through REST API
 
         Value is not stored or cached.
@@ -445,21 +600,27 @@ class XPRestAPI(API):
         if response.status_code == 200:
             respjson = response.json()
             webapi_logger.info(f"GET {dataref.path}: {url} = {respjson}")
-            if not raw and REST_KW.DATA.value in respjson and type(respjson[REST_KW.DATA.value]) in [bytes, str]:
+            if (
+                not raw
+                and not no_decode
+                and dataref.value_type == DATAREF_DATATYPE.DATA.value
+                and REST_KW.DATA.value in respjson
+                and type(respjson[REST_KW.DATA.value]) in [bytes, str]
+            ):
                 try:
                     return base64.b64decode(respjson[REST_KW.DATA.value])
-                except:
-                    logger.warning(f"cannot decode: {response} {response.reason} {response.text}", exc_info=True)
+                except Exception:
+                    logger.warning(f"cannot decode: {response} {response.reason_phrase} {response.text}", exc_info=True)
                 return respjson[REST_KW.DATA.value]
             return respjson[REST_KW.DATA.value]
-        webapi_logger.info(f"ERROR {dataref.path}: {response} {response.reason} {response.text}")
-        logger.error(f"dataref_value: {response} {response.reason} {response.text}")
+        webapi_logger.info(f"ERROR {dataref.path}: {response} {response.reason_phrase} {response.text}")
+        logger.error(f"dataref_value: {response} {response.reason_phrase} {response.text}")
         return None
 
-    def dataref_meta(self, dataref, fields: List[str] | str = "all") -> DatarefMeta | None:
+    def dataref_meta(self, dataref, fields: list[str] | str = "all") -> DatarefMeta | None:
         """Get dataref meta data through REST API
 
-        @todo: dataref_meta(self, dataref, fields:List[str]|str = "all")  # fields={id, name, value_type, all}
+        @todo: dataref_meta(self, dataref, fields:list[str]|str = "all")  # fields={id, name, value_type, all}
         """
         url = f"{self.rest_url}/datarefs/filter[name]={dataref.path}"
         if fields != "all":
@@ -471,21 +632,20 @@ class XPRestAPI(API):
             webapi_logger.info(f"GET {dataref.path}: {url} = {respjson}")
             data = respjson[REST_KW.DATA.value]
             try:
-                ret = Cache.meta(**data[0]) if type(data) is list and len(data) > 0 else Cache.meta(**data)
-                return ret
-            except:
+                return DatarefCache.meta(**data[0]) if type(data) is list and len(data) > 0 else DatarefCache.meta(**data)
+            except Exception:
                 logger.warning(f"dataref meta invalid {data}", exc_info=True)
             return None
-        webapi_logger.info(f"ERROR {dataref.path}: {response} {response.reason} {response.text}")
-        logger.error(f"dataref_value: {response} {response.reason} {response.text}")
+        webapi_logger.info(f"ERROR {dataref.path}: {response} {response.reason_phrase} {response.text}")
+        logger.error(f"dataref_value: {response} {response.reason_phrase} {response.text}")
         return None
 
     # Meta data collection for one or more datarefs or commands
     #
-    def datarefs_meta(self, datarefs: List[Dataref], fields: List[str] | str = "all", start: int | None = None, limit: int | None = None) -> List[DatarefMeta]:
+    def datarefs_meta(self, datarefs: list[Dataref], fields: list[str] | str = "all", start: int | None = None, limit: int | None = None) -> list[DatarefMeta]:
         """Get dataref meta data through REST API for all dataref supplied
 
-        @todo: datarefs_meta(self, dataref, fields:List[str]|str = "all", start: int|None = None, limit: int|None = None)  # fields={id, name, value_type, all}
+        @todo: datarefs_meta(self, dataref, fields:list[str]|str = "all", start: int|None = None, limit: int|None = None)  # fields={id, name, value_type, all}
         """
         payload = "&".join([f"filter[name]={d.path}" for d in datarefs])
         if fields != "all":
@@ -502,19 +662,18 @@ class XPRestAPI(API):
             webapi_logger.info(f"GET {payload}: {url} = {respjson}")
             data = respjson[REST_KW.DATA.value]
             try:
-                ret = [Cache.meta(**m) for m in data]
-                return ret
-            except:
+                return [DatarefCache.meta(**m) for m in data]
+            except Exception:
                 logger.warning(f"dataref meta invalid {data}", exc_info=True)
             return []
-        webapi_logger.info(f"ERROR {payload}: {response} {response.reason} {response.text}")
-        logger.error(f"datarefs_meta: {response} {response.reason} {response.text}")
+        webapi_logger.info(f"ERROR {payload}: {response} {response.reason_phrase} {response.text}")
+        logger.error(f"datarefs_meta: {response} {response.reason_phrase} {response.text}")
         return []
 
-    def commands_meta(self, commands: List[Command], fields: List[str] | str = "all", start: int | None = None, limit: int | None = None) -> List[CommandMeta]:
+    def commands_meta(self, commands: list[Command], fields: list[str] | str = "all", start: int | None = None, limit: int | None = None) -> list[CommandMeta]:
         """Get dataref meta data through REST API for all dataref supplied
 
-        @todo: commands_meta(self, dataref, fields:List[str]|str = "all", start: int|None = None, limit: int|None = None)  # fields={id, name, description, all}
+        @todo: commands_meta(self, dataref, fields:list[str]|str = "all", start: int|None = None, limit: int|None = None)  # fields={id, name, description, all}
         """
         payload = "&".join([f"filter[name]={c.path}" for c in commands])
         if fields != "all":
@@ -531,22 +690,18 @@ class XPRestAPI(API):
             webapi_logger.info(f"GET {payload}: {url} = {respjson}")
             data = respjson[REST_KW.DATA.value]
             try:
-                ret = [Cache.meta(**m) for m in data]
-                return ret
-            except:
+                return [CommandCache.meta(**m) for m in data]
+            except Exception:
                 logger.warning(f"command meta invalid {data}", exc_info=True)
             return []
-        webapi_logger.info(f"ERROR {payload}: {response} {response.reason} {response.text}")
-        logger.error(f"commands_meta: {response} {response.reason} {response.text}")
+        webapi_logger.info(f"ERROR {payload}: {response} {response.reason_phrase} {response.text}")
+        logger.error(f"commands_meta: {response} {response.reason_phrase} {response.text}")
         return []
 
-    def set_connection_from_beacon_data(self, beacon_data: "BeaconData", same_host: bool, remote_tcp_port: int = PROXY_TCP_PORT):
+    def set_connection_from_beacon_data(self, beacon_data: BeaconData, same_host: bool, remote_tcp_port: int = PROXY_TCP_PORT):
         API_TCP_PORT = 8086
 
         XP_MIN_VERSION = 121400
-        XP_MIN_VERSION_STR = "12.1.4"
-        XP_MAX_VERSION = 121499
-        XP_MAX_VERSION_STR = "12.1.4"
 
         self.use_rest = self.use_rest and not same_host
         new_host = "127.0.0.1"

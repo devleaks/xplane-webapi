@@ -10,7 +10,7 @@ import xpwebapi
 beacon = xpwebapi.beacon()
 
 
-def callback(connected: bool, beacon_data: xpwebapi.BeaconData, same_host: bool):
+def callback(connected: bool, beacon_data: xpwebapi.BeaconData, same_host: bool) -> None:
     print("X-Plane beacon " + ("detected" if connected else "not detected"))
     if connected:  # !!beacon defined before
         print(beacon_data)

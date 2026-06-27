@@ -79,7 +79,7 @@ def now() -> datetime:
 
 class OOOIManager(XPWSAPIApp):
 
-    def __init__(self, api, departure: str, arrival: str, callsign: str, logon: str, station: str, eta: datetime | None = None) -> None:
+    def __init__(self, api: xpwebapi.XPWebsocketAPI, departure: str, arrival: str, callsign: str, logon: str, station: str, eta: datetime | None = None) -> None:
         XPWSAPIApp.__init__(self, api=api)
 
         self.departure = departure
@@ -104,18 +104,18 @@ class OOOIManager(XPWSAPIApp):
         # debug
         self._onblock = False
 
-    def set_api(self, api):
+    def set_api(self, api: xpwebapi.XPWebsocketAPI) -> None:
         self.ws = api
         self.datarefs = {path: self.ws.dataref(path) for path in self.get_dataref_names()}
         self.ws.add_callback(cbtype=xpwebapi.CALLBACK_TYPE.ON_DATAREF_UPDATE, callback=self.dataref_changed)
 
-    def start(self):
+    def start(self) -> None:
         pass
 
-    def stop(self):
+    def stop(self) -> None:
         pass
 
-    def loop(self):
+    def loop(self) -> None:
         pass
 
     @property
@@ -123,7 +123,7 @@ class OOOIManager(XPWSAPIApp):
         return self.current_oooi
 
     @oooi.setter
-    def oooi(self, report: OOOI | Tuple[OOOI, datetime]):
+    def oooi(self, report: OOOI | Tuple[OOOI, datetime]) -> None:
         # Changes OOOI and set timestamp to supplied value if any
         newoooi = report if type(report) is OOOI else report[0]
         if self.current_oooi is None or self.current_oooi != newoooi:
@@ -131,7 +131,7 @@ class OOOIManager(XPWSAPIApp):
             self.all_oooi[newoooi] = now() if type(report) is OOOI else report[1]
         self.report()
 
-    def no_value(self, oooi: OOOI):
+    def no_value(self, oooi: OOOI) -> None:
         self.all_oooi[oooi] = EPOCH
 
     def has_value(self, oooi: OOOI) -> bool:
@@ -153,7 +153,7 @@ class OOOIManager(XPWSAPIApp):
             h = h + 360
         return abs(h - t) > 40  # we are not moving in the direction of the heading of the aircraft
 
-    def set_eta(self, eta: datetime):
+    def set_eta(self, eta: datetime) -> None:
         # when we get one...
         first = self.eta is None
         self.eta = eta
@@ -165,7 +165,7 @@ class OOOIManager(XPWSAPIApp):
     def get_dataref_names(self) -> set:
         return [d.value for d in DATAREFS]
 
-    def dataref_value(self, dataref: str):
+    def dataref_value(self, dataref: str) -> Any:
         dref = self.datarefs.get(dataref)
         return dref.value if dref is not None else 0
 
@@ -182,7 +182,7 @@ class OOOIManager(XPWSAPIApp):
             str: string with all values
         """
 
-        def strfdelta(tdelta):
+        def strfdelta(tdelta: timedelta) -> str:
             ret = ""
             if tdelta.days > 0:
                 ret = f"{tdelta.days} d "
@@ -194,7 +194,7 @@ class OOOIManager(XPWSAPIApp):
 
         TIME_FMT = "%H%M"
 
-        def pt(ts: datetime | None):
+        def pt(ts: datetime | None) -> str:
             if ts is None:
                 return "----"
             if ts == EPOCH:
@@ -252,7 +252,7 @@ class OOOIManager(XPWSAPIApp):
     # def both_engine_off(self):
     #     return True
 
-    def inital_state(self):
+    def inital_state(self) -> None:
         if self.inited:
             return
         for d in DATAREFS:
@@ -316,16 +316,16 @@ class OOOIManager(XPWSAPIApp):
 
         self.show_values(f"..initialized ({self.current_state})", first=True)
 
-    def show_values(self, welcome: str = "", first: bool = False):
+    def show_values(self, welcome: str = "", first: bool = False) -> None:
         values = self.first if first else self.last
         logger.debug(f"{welcome}\n{'\n'.join([f'{d} = {values[d]}' for d in values])}")
 
-    def set_last_stop(self, force: bool = False):
+    def set_last_stop(self, force: bool = False) -> None:
         if self.last_stop is None or force:
             logger.debug("setting last stop")
             self.last_stop = now()
 
-    def how_long_waiting(self, mark: bool = False):
+    def how_long_waiting(self, mark: bool = False) -> int:
         if self.last_stop is None:
             if mark:
                 self.last_stop = now()
@@ -335,7 +335,7 @@ class OOOIManager(XPWSAPIApp):
             self.last_stop = now()
         return howlong.seconds
 
-    def dataref_changed(self, dataref, value):
+    def dataref_changed(self, dataref: str, value: Any) -> None:
         super().dataref_changed(dataref=dataref, value=value)
 
         if not self.inited:
@@ -430,7 +430,7 @@ class OOOIManager(XPWSAPIApp):
 
         self.last[dataref] = value
 
-    def terminate(self):
+    def terminate(self) -> None:
         ws.unmonitor_datarefs(datarefs=self.datarefs, reason=self.name)
         self.ws.disconnect()
 

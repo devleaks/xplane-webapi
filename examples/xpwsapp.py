@@ -3,6 +3,7 @@ import logging
 import threading
 import time
 from abc import ABC, abstractmethod
+from typing import Any
 
 try:
     import xpwebapi
@@ -35,14 +36,14 @@ class XPWSAPIApp(ABC):
         self.thread = threading.Thread(target=self.loop, name=self.name)
         self.finish = threading.Event()
 
-    def set_api(self, api: xpwebapi.XPWebsocketAPI):
+    def set_api(self, api: xpwebapi.XPWebsocketAPI) -> None:
         self.ws = api
 
     @property
     def has_first_set(self) -> bool:
         return len([d for d in self.datarefs if d.value is not None]) == len(self.datarefs)
 
-    def wait_for_first_set_of_values(self):
+    def wait_for_first_set_of_values(self) -> None:
         while not self.has_first_set:
             time.sleep(2)
 
@@ -50,12 +51,12 @@ class XPWSAPIApp(ABC):
         dref = self.datarefs.get(dataref)
         return dref.value if dref is not None else None
 
-    def dataref_changed(self, dataref, value):
+    def dataref_changed(self, dataref: str, value: Any) -> None:
         if dataref not in self.get_dataref_names():
             return
         self.datarefs[dataref].value = value
 
-    def run(self):
+    def run(self) -> None:
         if self.ws is None:
             logger.error("no api")
             return
@@ -67,13 +68,13 @@ class XPWSAPIApp(ABC):
         self.ws.start()
         self.start()
 
-    def start(self):
+    def start(self) -> None:
         self.thread.start()
 
-    def stop(self):
+    def stop(self) -> None:
         self.finish.set()
 
-    def terminate(self):
+    def terminate(self) -> None:
         if self.ws is None:
             logger.error("no api")
             return
@@ -86,5 +87,5 @@ class XPWSAPIApp(ABC):
         return set()
 
     @abstractmethod
-    def loop(self):
+    def loop(self) -> None:
         pass

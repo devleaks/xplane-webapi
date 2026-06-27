@@ -90,7 +90,7 @@ class Runway:
         return self.he_latitude_deg, self.he_longitude_deg, self.he_elevation_ft, self.he_heading_degT, self.he_displaced_threshold_ft
 
     @property
-    def bbox(self):
+    def bbox(self) -> List[Tuple[float, float]]:
         if len(self.cached_bbox) > 0:
             return self.cached_bbox
 
@@ -137,10 +137,10 @@ class Runway:
 
 
 # Cleanup procedure
-def min_info(r):
+def min_info(r: dict) -> bool:
     # Minimum info needed for runway
     # No info, no runway
-    def empty(c):
+    def empty(c: Any) -> bool:
         return c is None or c == ""
 
     le = True
@@ -157,7 +157,7 @@ def min_info(r):
 NOT_SET = -99999
 
 
-def float_all(r):
+def float_all(r: dict) -> Runway:
     # Convert string to float
     # replace non existent with NOT_SET = null float, could be math.inf
     for c in [
@@ -255,7 +255,7 @@ class DATAREFS(StrEnum):
 
 class LandingMonitor(XPWSAPIApp):
 
-    def __init__(self, api) -> None:
+    def __init__(self, api: xpwebapi.XPWebsocketAPI) -> None:
         XPWSAPIApp.__init__(self, api=api)
 
         # Runways
@@ -299,7 +299,7 @@ class LandingMonitor(XPWSAPIApp):
         return self._altitude
 
     @state.setter
-    def state(self, state: ALTITUDE):
+    def state(self, state: ALTITUDE) -> None:
         """Change monitoring state and reports it"""
         if self._altitude != state:
             self._altitude = state
@@ -311,7 +311,7 @@ class LandingMonitor(XPWSAPIApp):
         return self._last_grounded
 
     @last_grounded.setter
-    def last_grounded(self, grounded: bool):
+    def last_grounded(self, grounded: bool) -> None:
         """Change monitoring state and reports it"""
         if self._last_grounded != grounded:
             self._last_grounded = grounded
@@ -326,7 +326,7 @@ class LandingMonitor(XPWSAPIApp):
     def get_dataref_names(self) -> set:
         return DATAREFS
 
-    def init(self):
+    def init(self) -> None:
         if self.has_first_set:
             return
         for d in DATAREFS:
@@ -386,7 +386,7 @@ class LandingMonitor(XPWSAPIApp):
             self.state = ALTITUDE.ALT_LOW
             logger.info(f".. state is {self.state}")  # this is the initial value
 
-    def show_values(self, welcome: str = "", first: bool = False):
+    def show_values(self, welcome: str = "", first: bool = False) -> None:
         values = self.first
         logger.debug(f"{welcome}\n{'\n'.join([f'{d} = {values[d]}' for d in values])}")
 
@@ -418,7 +418,7 @@ class LandingMonitor(XPWSAPIApp):
             return 1
         return -1
 
-    def dataref_changed(self, dataref, value):
+    def dataref_changed(self, dataref: str, value: Any) -> None:
         """Record changes and adjust ALTITUDE
 
         Based on the value of the dataref that has changed we determine a ALTITUDE.
@@ -526,7 +526,7 @@ class LandingMonitor(XPWSAPIApp):
         if self.monitoring:
             self.monitor_landing()
 
-    def monitor_landing(self):
+    def monitor_landing(self) -> None:
         """Based on ALTITUDE and dataref values we monitor the landing parameters"""
         if not self._air_time:
             return
@@ -549,13 +549,13 @@ class LandingMonitor(XPWSAPIApp):
         dhe = distance(lat, lon, rwy.he_latitude_deg, rwy.he_longitude_deg)
         return "le" if dle <= dhe else "he"
 
-    def record_position(self):
+    def record_position(self) -> None:
         lat = self.dataref_value(DATAREFS.LATITUDE)
         lon = self.dataref_value(DATAREFS.LONGITUDE)
         alt = self.dataref_value(DATAREFS.Y_AGL)
         self._positions.append((now(), lat, lon, alt))
 
-    def record_vspeed(self):
+    def record_vspeed(self) -> None:
         vs = self.dataref_value(DATAREFS.LOCAL_VY)
         tt = self.dataref_value(DATAREFS.TRUE_THETA)
         val = vs * math.cos(tt * 0.0174533)  # vs projected vertically
@@ -594,7 +594,7 @@ class LandingMonitor(XPWSAPIApp):
         if 0 < self.since_touchdown < 10:  # keep min and max smoothed values after touch down
             self._display_g = (min(self._display_g[0], g_lp), max(self._display_g[1], g_lp))
 
-    def snapshot(self, event: EVENT):
+    def snapshot(self, event: EVENT) -> None:
         if event in self.snapshots:
             logger.warning(f"snapshot {event} already taken")
             return
@@ -616,14 +616,14 @@ class LandingMonitor(XPWSAPIApp):
         self.snapshots[event] = (now(), distthr, {d: self.dataref_value(d) for d in DATAREFS}, vspeed)
         logger.debug(f"snapshot {event} taken")
 
-    def shortlist_closest_runways(self, max_distance: float = CLOSE_AIRPORT, report: bool = False):
+    def shortlist_closest_runways(self, max_distance: float = CLOSE_AIRPORT, report: bool = False) -> None:
         # Preselect all airports in the vicinity of the aircraft (out of 44000 airports)
         # Short list is updated every ~10 minutes when aircraft is below 6000ft/2km
         # Finer scans in the short list (~20 airports, ~70 runways) will occur very fast.
         lat = self.dataref_value(DATAREFS.LATITUDE)
         lon = self.dataref_value(DATAREFS.LONGITUDE)
 
-        def dist(rwy) -> bool:
+        def dist(rwy: Runway) -> bool:
             close = False
             if rwy.le_latitude_deg != NOT_SET:
                 d = distance(lat, lon, rwy.le_latitude_deg, rwy.le_longitude_deg)
@@ -638,7 +638,7 @@ class LandingMonitor(XPWSAPIApp):
             logger.info(f"short-listed {len(self._runways_shortlist)} runways within {max_distance}m")
         logger.debug([str(r) for r in self._runways_shortlist])
 
-    def set_target_runway(self, runway: Runway, orient: str, distance: float | None = None):
+    def set_target_runway(self, runway: Runway, orient: str, distance: float | None = None) -> None:
         self.runway = runway
         self.runway_orient = orient
         dist = ""
@@ -646,7 +646,7 @@ class LandingMonitor(XPWSAPIApp):
             dist = f" at {round(distance)}m"
         logger.info(f"new target runway {runway.name(orient=orient)}{dist}")
 
-    def target_runway_ahead(self, adjust: bool = True, ahead: float = 20000.0):
+    def target_runway_ahead(self, adjust: bool = True, ahead: float = 20000.0) -> None:
         # To be run perriodically
         # Make a bounding box of length ahead (meters) and 10% of ahead wide, in direction of tracking.
         # Threshold should be in bbox.
@@ -728,8 +728,8 @@ class LandingMonitor(XPWSAPIApp):
                 logger.info(f"enter runway {self._currently_on_runway}")
         return rwys
 
-    def report(self):
-        def snap_dataref_value(s, dref: DATAREFS):
+    def report(self) -> None:
+        def snap_dataref_value(s: tuple, dref: DATAREFS) -> Any:
             return s[2][dref]
 
         logger.info("\n")
@@ -855,7 +855,7 @@ class LandingMonitor(XPWSAPIApp):
         self.save()
         self.reset()
 
-    def save(self):
+    def save(self) -> None:
         with open("vs.csv", "w") as fp:
             i = 0
             for f in self._vspeeds:
@@ -869,7 +869,7 @@ class LandingMonitor(XPWSAPIApp):
 
         logger.info("monitor state saved")
 
-    def reset(self):
+    def reset(self) -> None:
         # sleep 1 minute?
         self.first = {}
         self.snapshots = {}
@@ -886,13 +886,13 @@ class LandingMonitor(XPWSAPIApp):
         self._display_g = (1.0, 1.0)
         logger.info("monitor was reset")
 
-    def start(self):
+    def start(self) -> None:
         pass
 
-    def stop(self):
+    def stop(self) -> None:
         pass
 
-    def loop(self):
+    def loop(self) -> None:
         pass
 
 

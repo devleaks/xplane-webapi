@@ -14,14 +14,14 @@ FT = 12 * 0.0254  # 1 foot = 12 inches = 0.3048m
 NAUTICAL_MILE = 1.852  # Nautical mile in meters 6076.118ft=1nm. Easy.
 
 
-def sign(x: float | int):
+def sign(x: float | int) -> int:
     # why does this function not exists in python?
     return -1 if x < 0 else (0 if abs(x) == 0 else 1)  # -0 is not 0.
 
 
 class convert:
     @staticmethod
-    def dms_to_dd(degrees, minutes, seconds, direction) -> float:
+    def dms_to_dd(degrees: float, minutes: float, seconds: float, direction: str) -> float:
         dd = float(degrees) + float(minutes) / 60 + float(seconds) / (60 * 60)
         return dd if direction in ("N", "E") else dd * -1
 

@@ -20,11 +20,11 @@ DATAREFS = ["sim/cockpit2/clock_timer/local_time_seconds", "sim/flightmodel/posi
 COMMANDS = ["sim/map/show_current"]
 
 
-def dataref_monitor(dataref: str, value: Any):
+def dataref_monitor(dataref: str, value: Any) -> None:
     print(f"{dataref}={value}")
 
 
-def command_active_monitor(command: str, active: bool):
+def command_active_monitor(command: str, active: bool) -> None:
     print(f"{command}={active}")
 
 

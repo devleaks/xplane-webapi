@@ -42,7 +42,7 @@ class SimulatorTime(XPWSAPIApp):
     def get_dataref_names(self) -> set:
         return DATAREFS
 
-    def loop(self):
+    def loop(self) -> None:
         logger.debug(f"{self.name} starting..")
         while not self.finish.is_set():
             t0 = datetime.now(timezone.utc)

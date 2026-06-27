@@ -14,20 +14,21 @@ import logging
 import threading
 import platform
 
+from types import TracebackType
 from time import sleep
-from typing import Tuple, Dict, Callable
+from typing import Callable, Self
 
-from .api import API, CONNECTION_STATUS, DatarefValueType, Dataref, Command
+from .api import API, CONNECTION_STATUS, DatarefReadResult, Dataref, Command
 from .beacon import BeaconData, BEACON_TIMEOUT
-from xpwebapi import beacon
+from .exceptions import XPPacketError, XPTimeoutError
 
 # local logging
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
 
 
-class XPlaneTimeout(Exception):
-    args = tuple("X-Plane timeout")
+class XPlaneTimeout(XPTimeoutError):
+    pass
 
 
 class XPUDPAPI(API):
@@ -42,6 +43,7 @@ class XPUDPAPI(API):
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.settimeout(10.0)
+        self._closed = False
 
         #
         self.callbacks = set()
@@ -67,9 +69,25 @@ class XPUDPAPI(API):
             self.beacon.add_callback(self.beacon_callback)  # can only add after API.__init__() call since it creates class attributes
 
     def __del__(self):
-        for i in range(len(self.datarefs)):
-            self._request_dataref(next(iter(self.datarefs.values())), freq=0)
+        try:
+            self.close()
+        except Exception:
+            logger.debug("UDP socket cleanup failed", exc_info=True)
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, _exc_type: type[BaseException] | None, _exc: BaseException | None, _tb: TracebackType | None) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Stop monitored datarefs and close the UDP socket."""
+        if self._closed:
+            return
+        for dataref in list(self.datarefs.values()):
+            self._request_dataref(dataref, freq=0)
         self.socket.close()
+        self._closed = True
 
     @property
     def connected(self) -> bool:
@@ -92,11 +110,10 @@ class XPUDPAPI(API):
         MCAST_PORT = 49707  # XPBeaconMonitor.MCAST_PORT
 
         logger.warning("no beacon monitor, cannot test connection")
-        socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        # open socket for multicast group.
-        # this socker is for getting the beacon, it can be closed when beacon is found.
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)  # SO_REUSEPORT?
+        reuse_port = getattr(socket, "SO_REUSEPORT", None)
+        if reuse_port is not None:
+            sock.setsockopt(socket.SOL_SOCKET, reuse_port, 1)  # SO_REUSEPORT?
         if platform.system() == "Windows":
             sock.bind(("", MCAST_PORT))
         else:
@@ -157,7 +174,7 @@ class XPUDPAPI(API):
         for callback in cbs:
             try:
                 callback(**kwargs)
-            except:
+            except Exception:
                 logger.error(f"callback {callback}", exc_info=True)
                 ret = False
         return ret
@@ -185,18 +202,19 @@ class XPUDPAPI(API):
         elif vtype == "bool":
             message = struct.pack("<5sI500s", cmd, int(dataref.value), string)
 
-        assert len(message) == 509
+        if len(message) != 509:
+            raise XPPacketError("invalid DREF packet length", packet_type="DREF", expected=509, actual=len(message))
         self.socket.sendto(message, (self.host, self.port))
         return True
 
-    def dataref_value(self, dataref: Dataref) -> DatarefValueType | None:
+    def dataref_value(self, dataref: Dataref, raw: bool = False, no_decode: bool = False) -> DatarefReadResult:
         """Returns Dataref value from simulator
 
         Args:
             dataref (Dataref): Dataref to get the value from
 
         Returns:
-            bool | str | int | float: Value of dataref
+            DatarefReadResult: Value of dataref.
         """
         all_values = self.read_monitored_dataref_values()
         if dataref.path in all_values:
@@ -204,7 +222,7 @@ class XPUDPAPI(API):
             return dataref.value
         return None
 
-    def execute_command(self, command: Command, duration: float = 0.0) -> bool | int:
+    def execute_command(self, command: Command, duration: float = 0.0) -> bool:
         """Execute command
 
         Args:
@@ -226,8 +244,8 @@ class XPUDPAPI(API):
         Returns:
             bool: [description]
         """
-        message = struct.pack("<4sx500s", b"CMND", command.path.encode("utf-8"))
-        self.socket.sendto(message, (self.beacon_data["IP"], self.UDP_PORT))
+        message = struct.pack("<4sx500s", b"CMND", command.encode("utf-8"))
+        self.socket.sendto(message, (self.host, self.port))
         return True
 
     def monitor_dataref(self, dataref: Dataref) -> bool | int:
@@ -242,9 +260,12 @@ class XPUDPAPI(API):
             bool if fails
             request id if succeeded
         """
-        return self._request_dataref(dataref=dataref.path, freq=1)
+        ret = self._request_dataref(dataref=dataref.path, freq=1)
+        if ret is not False:
+            dataref.inc_monitor()
+        return ret
 
-    def unmonitor_datarefs(self, datarefs: dict, reason: str | None = None) -> Tuple[int | bool, Dict]:
+    def unmonitor_datarefs(self, datarefs: dict, reason: str | None = None) -> tuple[int | bool, dict]:
         """Stops monitoring supplied datarefs.
 
         [description]
@@ -254,9 +275,19 @@ class XPUDPAPI(API):
             reason (str | None): Documentation only string to identify call to function.
 
         Returns:
-            Tuple[int | bool, Dict]: [description]
+            tuple[int | bool, dict]: [description]
         """
-        return self._request_dataref(dataref=dataref.path, freq=0)
+        ret = True
+        for dataref in datarefs.values():
+            if dataref.monitored_count > 1:
+                dataref.dec_monitor()
+                continue
+            r = self._request_dataref(dataref=dataref.path, freq=0)
+            if r is not False and dataref.is_monitored:
+                dataref.dec_monitor()
+            if r is False:
+                ret = False
+        return ret, {}
 
     def _request_dataref(self, dataref: str, freq: int | None = None) -> bool | int:
         """Request X-Plane to send the dataref with a certain frequency.
@@ -283,13 +314,14 @@ class XPUDPAPI(API):
         cmd = b"RREF\x00"
         string = dataref.encode()
         message = struct.pack("<5sii400s", cmd, freq, idx, string)
-        assert len(message) == 413
+        if len(message) != 413:
+            raise XPPacketError("invalid RREF packet length", packet_type="RREF", expected=413, actual=len(message))
         self.socket.sendto(message, (self.host, self.port))
         if self.datarefidx % 100 == 0:
             sleep(0.2)
         return True
 
-    def read_monitored_dataref_values(self):
+    def read_monitored_dataref_values(self) -> dict:
         """Do a single read and populate dataref with values.
 
         This function should be called at regular intervals to collect all requested datarefs.
@@ -330,10 +362,10 @@ class XPUDPAPI(API):
                         retvalues[self.datarefs[idx]] = value
                         self.execute_callbacks(dataref=self.datarefs[idx], value=value)
             self.xplaneValues.update(retvalues)
-        except:
+        except Exception:
             if self.status != CONNECTION_STATUS.LISTENING_FOR_DATA:
                 self.status = CONNECTION_STATUS.LISTENING_FOR_DATA
-            raise XPlaneTimeout
+            raise XPlaneTimeout("UDP read timeout", host=self.host, port=self.port)
         return self.xplaneValues
 
     @property
@@ -346,8 +378,8 @@ class XPUDPAPI(API):
         self.status = CONNECTION_STATUS.UDP_LISTENER_RUNNING
         while self.udp_listener_running:
             try:
-                data = self.read_monitored_dataref_values()
-            except:
+                self.read_monitored_dataref_values()
+            except Exception:
                 logger.warning("error", exc_info=True)
 
         logger.info("..udp listener stopped")
@@ -377,7 +409,7 @@ class XPUDPAPI(API):
             self.udp_lsnr_not_running.set()
             if self.udp_thread is not None and self.udp_thread.is_alive():
                 logger.debug("stopping udp listener..")
-                wait = self.RECEIVE_TIMEOUT
+                wait = BEACON_TIMEOUT
                 logger.debug(f"..asked to stop udp listener (this may last {wait} secs. for timeout)..")
                 self.udp_thread.join(wait)
                 if self.udp_thread.is_alive():

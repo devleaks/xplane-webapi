@@ -59,14 +59,14 @@ def now() -> datetime:
 
 class PositionReport(XPWSAPIApp):
 
-    def __init__(self, api, frequency: int, callsign: str, logon: str, station: str, eta: datetime | None = None) -> None:
+    def __init__(self, api: xpwebapi.XPWebsocketAPI, frequency: int, callsign: str, logon: str, station: str, eta: datetime | None = None) -> None:
         XPWSAPIApp.__init__(self, api=api)
         self.frequency = frequency
 
     def get_dataref_names(self) -> set:
         return DATAREFS
 
-    def loop(self):
+    def loop(self) -> None:
         while not self.finish.is_set():
             try:
                 print(self.report())

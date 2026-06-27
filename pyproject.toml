@@ -1,50 +1,27 @@
-# ###########################################
-#
-# Project
-#
 [project]
 name = "xpwebapi"
-
+version = "3.5.0"
 authors = [
   { name="Pierre M.", email="pierre@devleaks.be" }
 ]
-
 description = "Python Wrapper for Laminar Research X-Plane Web API"
-
 readme = "README.md"
-
 license = {file = "LICENCE"}
-
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Topic :: Games/Entertainment :: Simulation",
 ]
-
-requires-python = ">=3.12"
-# (using type)
-
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "ifaddr~=0.2",
     "natsort~=8.4",
     "packaging~=25.0",
-    "requests~=2.32",
-    "simple-websocket~=1.1",
-]
-
-dynamic = [
-    "version"
-]
-
-[project.optional-dependencies]
-dev = [
-    "mkdocs",
-    "mkdocs-material",
-    "mkdocstrings",
-    "mkdocstrings-python",
-    "types-requests",
-    "types-Werkzeug"
+    "httpx~=0.28",
+    "websockets>=16,<17",
+    "pydantic>=2,<3",
 ]
 
 [project.urls]
@@ -53,37 +30,67 @@ Documentation = "https://devleaks.github.io/xplane-webapi/"
 Issues = "https://github.com/devleaks/xplane-webapi/issues"
 Source = "https://github.com/devleaks/xplane-webapi"
 
+[dependency-groups]
+dev = [
+    "bandit>=1.9.4",
+    "cohesion>=1.2.0",
+    "coverage>=7.14.1",
+    "detect-secrets>=1.5.0",
+    "interrogate>=1.7.0",
+    "lizard>=1.23.0",
+    "mkdocs",
+    "mkdocs-git-revision-date-localized-plugin",
+    "mkdocs-material",
+    "mkdocstrings",
+    "mkdocstrings-python",
+    "pre-commit>=4.5.1",
+    "ruff>=0.15.17",
+    "ty>=0.0.49",
+    "vulture>=2.16",
+    "wily>=1.12.2",
+    "xenon>=0.9.3",
+]
 
-# ###########################################
-#
-# Edit
-#
+[tool.coverage.run]
+source = ["xpwebapi"]
+branch = false
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.22,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""
+
 [tool.ruff]
 line-length = 160
-docstring-code-format = true
+extend-exclude = ["examples"]
+
+[tool.ruff.lint]
 select = [
     "E",
     "F",
     "W",
 ]
-ignore = []
 
-[tool.black]
-line-length = 160
+[tool.ruff.format]
+docstring-code-format = true
 
-[tool.flake8]
-max-line-length = 160
+[tool.ty.src]
+exclude = ["examples/**"]
 
-# ###########################################
-#
-# Build
-#
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.version]
-path = "xpwebapi/__init__.py"
-
-[tool.hatch.metadata]
-allow-direct-references = true
+[tool.ty.rules]
+all = "error"
+# Current code predates strict annotation-modernization requirements.
+# Keep ty blocking on compatibility errors while leaving these broad cleanup
+# classes for separate focused work.
+missing-override-decorator = "ignore"
+missing-type-argument = "ignore"
+unresolved-attribute = "ignore"

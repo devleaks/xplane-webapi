@@ -18,11 +18,11 @@ ws = xpwebapi.ws_api(host="192.168.1.141", port=8080)  # defaults to v2 for Webs
 print(ws.ws_url)
 
 
-def dataref_monitor(dataref: str, value: Any):
+def dataref_monitor(dataref: str, value: Any) -> None:
     print(f"{dataref}={value}")
 
 
-def command_active_monitor(command: str, active: bool):
+def command_active_monitor(command: str, active: bool) -> None:
     print(f"{command}={active}")
 
 

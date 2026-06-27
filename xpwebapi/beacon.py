@@ -17,31 +17,33 @@ import struct
 import binascii
 import platform
 import time
-from typing import Callable, List, Set
+from typing import Callable
 from enum import Enum, IntEnum
 from datetime import datetime
 from dataclasses import dataclass
 
 import ifaddr
 
+from .exceptions import XPBeaconError, XPVersionError
+from .retry import RetryConfig, sleep_before_retry
+
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
 
 
-# XPBeaconMonitor-specific error classes
-class XPlaneNoBeacon(Exception):
-    args = tuple("No beacon received from any running XPlane instance in network")
+class XPlaneNoBeacon(XPBeaconError):
+    pass
 
 
-class XPlaneVersionNotSupported(Exception):
-    args = tuple("XPlane version not supported")
+class XPlaneVersionNotSupported(XPVersionError):
+    pass
 
 
-def list_my_ips() -> List[str]:
+def list_my_ips() -> list[str]:
     """Utility function that list most if not all IP addresses of this host.
 
     Returns:
-        List[str]: List of IP v4 addresses of this host on most, if not all interfaces (cable, wi-fi, bluetooth...)
+        list[str]: List of IP v4 addresses of this host on most, if not all interfaces (cable, wi-fi, bluetooth...)
     """
     r = list()
     adapters = ifaddr.get_adapters()
@@ -112,7 +114,7 @@ class XPBeaconMonitor:
         socket (socket.socket | None): Socket to multicast listener
         status (BEACON_MONITOR_STATUS): Beacon monitor status
         data: BeaconData | None - Beacon data as broadcasted by X-Plane in its beacon. None if beacon is not received.
-        my_ips (List[str]): List of this host IP addresses
+        my_ips (list[str]): List of this host IP addresses
 
         _already_warned (bool):
         _callback: (Callable | None):
@@ -125,8 +127,10 @@ class XPBeaconMonitor:
     ```python
     import xpwebapi
 
+
     def callback(connected: bool, beacon_data: xpwebapi.BeaconData, same_host: bool):
         print("reachable" if connected else "unreachable")
+
 
     beacon = xpwebapi.beacon()
     beacon.set_callback(callback)
@@ -147,10 +151,11 @@ class XPBeaconMonitor:
 
     ROLES = ["none", "master", "extern visual", "IOS"]
 
-    def __init__(self):
+    def __init__(self, retry_attempts: int = 1, retry_backoff: float = 0.0, retry_backoff_max: float = 5.0):
         # Open a UDP Socket to receive on Port 49000
         self.socket = None
         self.data: BeaconData | None = None
+        self.retry_config = RetryConfig(attempts=retry_attempts, backoff=retry_backoff, max_backoff=retry_backoff_max)
 
         self.not_monitoring: threading.Event = threading.Event()
         self.not_monitoring.set()
@@ -158,7 +163,7 @@ class XPBeaconMonitor:
         self._connect_thread: threading.Thread | None = None
 
         self._already_warned = 0
-        self._callback: Set[Callable] = set()
+        self._callback: set[Callable] = set()
         self.my_ips = list_my_ips()
         self._status = BEACON_MONITOR_STATUS.RUNNING  # init != first value
         self.status = BEACON_MONITOR_STATUS.NOT_RUNNING  # first value set through api
@@ -195,7 +200,7 @@ class XPBeaconMonitor:
     # ################################
     # Internal functions
     #
-    def callback(self, connected: bool, beacon_data: BeaconData, same_host: bool):
+    def callback(self, connected: bool, beacon_data: BeaconData | None, same_host: bool | None):
         """Execute all callback functions
 
         Callback function prototype
@@ -209,10 +214,21 @@ class XPBeaconMonitor:
             for c in self._callback:
                 try:
                     c(connected=connected, beacon_data=beacon_data, same_host=same_host)
-                except:
+                except Exception:
                     logger.warning(f"issue calling beacon callback {c}", exc_info=True)
 
     def get_beacon(self, timeout: float = BEACON_TIMEOUT) -> BeaconData | None:
+        """Attempts to capture an X-Plane beacon using configured transient retries."""
+        for attempt in range(self.retry_config.attempts):
+            try:
+                return self._get_beacon_once(timeout=timeout)
+            except XPlaneNoBeacon:
+                if attempt >= self.retry_config.attempts - 1:
+                    raise
+                sleep_before_retry(self.retry_config, attempt)
+        return None
+
+    def _get_beacon_once(self, timeout: float = BEACON_TIMEOUT) -> BeaconData | None:
         """Attemps to capture X-Plane beacon. Returns first occurence of beacon data encountered
            or None if no beacon was detected before timeout.
 
@@ -227,7 +243,6 @@ class XPBeaconMonitor:
             hostname: str
             xplane_version: int
             role: int
-
         ```
 
         Args:
@@ -246,10 +261,13 @@ class XPBeaconMonitor:
         # open socket for multicast group.
         # this socker is for getting the beacon, it can be closed when beacon is found.
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)  # SO_REUSEPORT?
         if platform.system() == "Windows":
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(("", self.MCAST_PORT))
         else:
+            reuse_port = getattr(socket, "SO_REUSEPORT", None)
+            if reuse_port is not None:
+                sock.setsockopt(socket.SOL_SOCKET, reuse_port, 1)
             sock.bind((self.MCAST_GRP, self.MCAST_PORT))
         mreq = struct.pack("=4sl", socket.inet_aton(self.MCAST_GRP), socket.INADDR_ANY)
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
@@ -309,13 +327,13 @@ class XPBeaconMonitor:
                     logger.info(f"XPlane Beacon Version: {beacon_major_version}.{beacon_minor_version}.{application_host_id} (role: {self.ROLES[role]})")
                 else:
                     logger.warning(f"XPlane Beacon Version not supported: {beacon_major_version}.{beacon_minor_version}.{application_host_id}")
-                    raise XPlaneVersionNotSupported()
+                    raise XPlaneVersionNotSupported(f"beacon version {beacon_major_version}.{beacon_minor_version}.{application_host_id}")
 
         except socket.timeout:
             self._timeout = self._timeout + 1
             self._latest_timeout = self._latest_timeout + 1
             logger.debug(f"XPlane beacon not received within timeout ({round(timeout, 1)} secs.).")
-            raise XPlaneNoBeacon()
+            raise XPlaneNoBeacon("no beacon received", timeout=timeout)
         finally:
             sock.close()
 
@@ -389,9 +407,11 @@ class XPBeaconMonitor:
     def same_host(self) -> bool:
         """Attempt to determine if X-Plane is running on local host (where beacon monitor runs) or remote host"""
         if self.receiving_beacon:
-            r = self.data.host in self.my_ips
-            logger.debug(f"{self.data.host}{'' if r else ' not'} in {self.my_ips}")
-            return r
+            data = self.data
+            if data is not None:
+                r = data.host in self.my_ips
+                logger.debug(f"{data.host}{'' if r else ' not'} in {self.my_ips}")
+                return r
         return False
 
     def set_callback(self, callback: Callable | None = None):
@@ -408,7 +428,8 @@ class XPBeaconMonitor:
 
         Connected is True is beacon is detected at regular interval, False otherwise
         """
-        self._callback.add(callback)
+        if callback is not None:
+            self._callback.add(callback)
 
     def start_monitor(self):
         """Starts beacon monitor"""

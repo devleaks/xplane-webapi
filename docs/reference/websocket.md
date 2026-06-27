@@ -1,0 +1,3 @@
+# WebSocket
+
+::: xpwebapi.ws

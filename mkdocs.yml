@@ -28,7 +28,17 @@ nav:
   - Overview: index.md
   - Changelog: changelog.md
 - Usage: usage/index.md
-- Reference: reference/index.md
+- Reference:
+  - Overview: reference/index.md
+  - Package: reference/package.md
+  - Core API: reference/core-api.md
+  - REST: reference/rest.md
+  - Async REST: reference/async-rest.md
+  - WebSocket: reference/websocket.md
+  - UDP: reference/udp.md
+  - Beacon: reference/beacon.md
+  - Exceptions: reference/exceptions.md
+  - Logging: reference/logging.md
 
 markdown_extensions:
 - pymdownx.snippets
@@ -67,4 +77,7 @@ plugins:
             unwrap_annotated: true
   - git-revision-date-localized:
       enable_creation_date: true
+      enable_git_follow: false
+      exclude:
+        - superpowers/**
       type: timeago

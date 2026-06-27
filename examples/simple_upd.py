@@ -12,7 +12,7 @@ FORMAT = "[%(asctime)s] %(levelname)s %(threadName)s %(filename)s:%(funcName)s:%
 logging.basicConfig(level=logging.INFO, format=FORMAT, datefmt="%H:%M:%S")
 
 
-def dataref_monitor(dataref: str, value: Any):
+def dataref_monitor(dataref: str, value: Any) -> None:
     print(f"{dataref}={value}")
 
 

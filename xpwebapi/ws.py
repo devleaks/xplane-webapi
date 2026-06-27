@@ -8,19 +8,22 @@ import logging
 import json
 import time
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Tuple, Dict, Optional, Callable
+from typing import Callable, Self, cast
 from enum import Enum
 
 # Packaging is used in Cockpit to check driver versions
 from packaging.version import Version
 
-from simple_websocket import Client, ConnectionClosed
+from websockets.exceptions import ConnectionClosed
+from websockets.sync.client import ClientConnection, connect
 
-from .api import CONNECTION_STATUS, DATAREF_DATATYPE, webapi_logger, Dataref, Command
+from .api import APIResult, CONNECTION_STATUS, DATAREF_DATATYPE, webapi_logger, Dataref, Command
 from .rest import REST_KW, XPRestAPI
 from .beacon import BeaconData
+from .retry import sleep_before_retry
 
 # local logging
 logger = logging.getLogger(__name__)
@@ -32,6 +35,10 @@ XP_MAX_VERSION = 121499
 XP_MAX_VERSION_STR = "12.3.3"
 
 MAX_WARNING_COUNT = 5
+
+type DatarefBatch = Mapping[str, Dataref] | Iterable[Dataref]
+type BulkDatarefValue = Dataref | list[Dataref]
+type BulkDatarefBatch = Mapping[int, BulkDatarefValue]
 
 
 # WEB API RETURN CODES
@@ -60,9 +67,9 @@ class Request:
     r_id: int  # Request id
     body: dict  # Request body
     ts: datetime  # timestamp of submission
-    ts_ack: Optional[datetime] = None  # timestamp of reception
-    success: Optional[bool] = None  # sucess of request, None if no feedback yet
-    error: Optional[str] = None  # error message, if any
+    ts_ack: datetime | None = None  # timestamp of reception
+    success: bool | None = None  # sucess of request, None if no feedback yet
+    error: str | None = None  # error message, if any
 
 
 def now() -> datetime:
@@ -77,7 +84,8 @@ class XPWebsocketAPI(XPRestAPI):
 
     The XPWebsocketAPI is a client interface to X-Plane Web API, Websocket server.
 
-    The XPWebsocketAPI has a _connection monitor_ (XPWebsocketAPI.connection_monitor) that can be started (XPWebsocketAPI.connect) and stopped (XPWebsocketAPI.disconnect).
+    The XPWebsocketAPI has a _connection monitor_ (XPWebsocketAPI.connection_monitor) that can be started
+    (XPWebsocketAPI.connect) and stopped (XPWebsocketAPI.disconnect).
     The monitor tests for REST API reachability, and if reachable, creates a Websocket.
     If the websocket exists and is opened, requests can be made through it and responses expected.
 
@@ -92,16 +100,36 @@ class XPWebsocketAPI(XPRestAPI):
     RECEIVE_TIMEOUT = 5  # seconds, assumes no awser if no message recevied withing that timeout
     BEACON_TIMEOUT = 60  # seconds, if no beacon for 60 seconds, stops to release resources
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8086, api: str = "api", api_version: str = "v2", use_rest: bool = False):
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8086,
+        api: str = "api",
+        api_version: str = "v2",
+        use_rest: bool = False,
+        retry_attempts: int = 1,
+        retry_backoff: float = 0.0,
+        retry_backoff_max: float = 5.0,
+    ):
         # Open a UDP Socket to receive on Port 49000
-        XPRestAPI.__init__(self, host=host, port=port, api=api, api_version=api_version, use_cache=True)
+        XPRestAPI.__init__(
+            self,
+            host=host,
+            port=port,
+            api=api,
+            api_version=api_version,
+            use_cache=True,
+            retry_attempts=retry_attempts,
+            retry_backoff=retry_backoff,
+            retry_backoff_max=retry_backoff_max,
+        )
 
         self.use_rest = use_rest  # setter in API
 
         hostname = socket.gethostname()
         self.local_ip = socket.gethostbyname(hostname)
 
-        self.ws: Client | None = None  # None = no connection
+        self.ws: ClientConnection | None = None  # None = no connection
         self.ws_lsnr_not_running = threading.Event()
         self.ws_lsnr_not_running.set()  # means it is off
         self.ws_thread = None
@@ -130,6 +158,10 @@ class XPWebsocketAPI(XPRestAPI):
         self.on_request_feedback = (
             self._on_request_feedback
         )  # Called on command request feedback, for each indivudua feedback, prototype: `func(request_id:int, payload: dict)`
+
+    def __enter__(self) -> Self:
+        self.connect()
+        return self
 
     @property
     def ws_url(self) -> str:
@@ -173,7 +205,7 @@ class XPWebsocketAPI(XPRestAPI):
             try:
                 self.inc("callback_" + cbtype.value)
                 callback(**kwargs)
-            except:
+            except Exception:
                 logger.error(f"callback {callback}", exc_info=True)
                 ret = False
         return ret
@@ -233,22 +265,25 @@ class XPWebsocketAPI(XPRestAPI):
         if self.ws is None:
             url = self.ws_url
             if url is not None:
-                try:
-                    if self.rest_api_reachable:
-                        self.ws = Client.connect(url)
-                        self.status = CONNECTION_STATUS.WEBSOCKET_CONNNECTED
-                        self.reload_caches()
-                        logger.info(f"websocket opened at {url}")
-                        self.execute_callbacks(CALLBACK_TYPE.ON_OPEN)
-                    else:
+                for attempt in range(self.retry_config.attempts):
+                    try:
+                        if self.rest_api_reachable:
+                            self.ws = connect(url, proxy=None)
+                            self.status = CONNECTION_STATUS.WEBSOCKET_CONNNECTED
+                            self.reload_caches()
+                            logger.info(f"websocket opened at {url}")
+                            self.execute_callbacks(CALLBACK_TYPE.ON_OPEN)
+                            return
                         if self._unreach_count <= MAX_WARNING_COUNT:
                             last_warning = " (last warning)" if self._unreach_count == MAX_WARNING_COUNT else ""
                             logger.warning(f"rest api unreachable{last_warning}")
                         if self._unreach_count % 50 == 0:
                             logger.warning("rest api unreachable")
                         self._unreach_count = self._unreach_count + 1
-                except:
-                    logger.error("cannot connect", exc_info=True)
+                    except Exception:
+                        logger.error("cannot connect", exc_info=True)
+                    if attempt < self.retry_config.attempts - 1:
+                        sleep_before_retry(self.retry_config, attempt)
             else:
                 logger.warning(f"web socket url is none {url}")
         else:
@@ -260,7 +295,7 @@ class XPWebsocketAPI(XPRestAPI):
             self.ws.close()
             self.ws = None
             self.status = CONNECTION_STATUS.WEBSOCKET_DISCONNNECTED
-            dummy = super().connected  # set REST API reachability status
+            super().connected
             if not silent:
                 logger.info("websocket closed")
             self.execute_callbacks(CALLBACK_TYPE.ON_CLOSE)
@@ -322,7 +357,7 @@ class XPWebsocketAPI(XPRestAPI):
                         if number_of_timeouts >= MAX_TIMEOUT_COUNT and to_count % WARN_FREQ == 0:
                             logger.error(f"..X-Plane instance not found on local network.. ({now().strftime('%H:%M:%S')})")
                         to_count = to_count + 1
-                except:
+                except Exception:
                     logger.error(f"..X-Plane instance not found on local network.. ({now().strftime('%H:%M:%S')})", exc_info=True)
                 # If still no connection (above attempt failed)
                 # we wait before trying again
@@ -380,6 +415,11 @@ class XPWebsocketAPI(XPRestAPI):
                 logger.debug("..not connected")
         logger.info(f"disconnected.\nXP Web API Statistics: {self._stats}")
 
+    def close(self) -> None:
+        """Disconnect the websocket monitor and close the HTTP session."""
+        self.disconnect()
+        super().close()
+
     # ################################
     # I/O
     #
@@ -401,16 +441,26 @@ class XPWebsocketAPI(XPRestAPI):
         if payload is None or len(payload) == 0:
             logger.warning("no payload")
             return False
+        websocket = self.ws
+        if websocket is None:
+            logger.warning("not connected")
+            return False
         req_id = self.next_req
         payload[REST_KW.REQID.value] = req_id
         self._requests[req_id] = Request(r_id=req_id, body=payload, ts=now())
         self.inc("send")
-        self.ws.send(json.dumps(payload))
+        websocket.send(json.dumps(payload))
         webapi_logger.info(f">>SENT {payload}")
         if len(mapping) > 0:
             maps = [f"{k}={v}" for k, v in mapping.items()]
             webapi_logger.info(f">> MAP {', '.join(maps)}")
         return req_id
+
+    def _dataref_batch_values(self, datarefs: DatarefBatch) -> list[Dataref]:
+        """Normalize supported dataref batch inputs to a concrete list."""
+        if isinstance(datarefs, Mapping):
+            return list(cast(Mapping[str, Dataref], datarefs).values())
+        return list(datarefs)
 
     # Dataref operations
     #
@@ -442,20 +492,23 @@ class XPWebsocketAPI(XPRestAPI):
         if meta is None:
             logger.warning(f"dataref {path} not found in X-Plane datarefs database")
             return -1
-        payload = {
+        dref_entry: dict = {REST_KW.IDENT.value: meta.ident, REST_KW.VALUE.value: value}
+        params: dict = {REST_KW.DATAREFS.value: [dref_entry]}
+        payload: dict = {
             REST_KW.TYPE.value: "dataref_set_values",
-            REST_KW.PARAMS.value: {REST_KW.DATAREFS.value: [{REST_KW.IDENT.value: meta.ident, REST_KW.VALUE.value: value}]},
+            REST_KW.PARAMS.value: params,
         }
         mapping = {meta.ident: meta.name}
         if split:
-            payload[REST_KW.PARAMS.value][REST_KW.DATAREFS.value][0][REST_KW.INDEX.value] = index
+            drefs = params[REST_KW.DATAREFS.value]
+            drefs[0][REST_KW.INDEX.value] = index
         return self.send(payload, mapping)
 
-    def register_bulk_dataref_value_event(self, datarefs, on: bool = True) -> bool | int:
+    def register_bulk_dataref_value_event(self, datarefs: BulkDatarefBatch, on: bool = True) -> bool | int:
         drefs = []
         for dataref in datarefs.values():
             if type(dataref) is list:
-                meta = self.get_dataref_meta_by_id(dataref[0].ident)  # we modify the global source info, not the local copy in the Dataref()
+                meta = dataref[0].meta  # we modify the global source info, not the local copy in the Dataref()
                 if meta is None:
                     logger.warning(f"cannot register {dataref[0]}, no meta data")
                     continue
@@ -477,8 +530,10 @@ class XPWebsocketAPI(XPRestAPI):
             else:
                 if dataref.is_array:
                     logger.debug(f"dataref {dataref.name}: collecting whole array")
-                drefs.append({REST_KW.IDENT.value: dataref.ident})
-        if len(datarefs) > 0:
+                ident = dataref.ident
+                if ident is not None:
+                    drefs.append({REST_KW.IDENT.value: ident})
+        if len(drefs) > 0:
             mapping = {}
             for d in datarefs.values():
                 if type(d) is list:
@@ -488,9 +543,8 @@ class XPWebsocketAPI(XPRestAPI):
                     mapping[d.ident] = d.name
             action = "dataref_subscribe_values" if on else "dataref_unsubscribe_values"
             return self.send({REST_KW.TYPE.value: action, REST_KW.PARAMS.value: {REST_KW.DATAREFS.value: drefs}}, mapping)
-        if on:
-            action = "register" if on else "unregister"
-            logger.warning(f"no bulk datarefs to {action}")
+        action = "register" if on else "unregister"
+        logger.warning(f"no bulk datarefs to {action}")
         return False
 
     # Command operations
@@ -627,6 +681,172 @@ class XPWebsocketAPI(XPRestAPI):
         else:
             logger.debug(f"req. {request_id}: {REST_KW.SUCCESS.value if payload[REST_KW.SUCCESS.value] else FAILED}")
 
+    def _log_receive_timeout(self, to_count: int) -> None:
+        TO_COUNT_DEBUG = 10
+        TO_COUNT_INFO = 50
+        if to_count % TO_COUNT_INFO == 0:
+            logger.debug(f"..receive timeout ({self.RECEIVE_TIMEOUT} secs.), waiting for response from simulator..")
+        elif to_count % TO_COUNT_DEBUG == 0:
+            logger.debug(f"..receive timeout ({self.RECEIVE_TIMEOUT} secs.), waiting for response from simulator..")
+
+    def _mark_first_websocket_message(self, lnow: datetime, start_time: datetime, attention: int) -> None:
+        logger.info(f"..first message at {lnow.replace(microsecond=0)} ({round((lnow - start_time).seconds, 2)} secs.).. {'<' * attention}")
+        self.status = CONNECTION_STATUS.RECEIVING_DATA
+        self.RECEIVE_TIMEOUT = 5  # when connected, check less often, message will arrive
+
+    def _handle_result_response(self, data: dict, lnow: datetime) -> None:
+        self.inc("response_result")
+        webapi_logger.info(f"<<RCV  {data}")
+        req_id = data.get(REST_KW.REQID.value)
+        if req_id is None:
+            return
+
+        self._requests[req_id].ts_ack = lnow
+        success = data.get(REST_KW.SUCCESS.value)
+        self._requests[req_id].success = success
+        if not success:
+            self._requests[req_id].error = data.get(REST_KW.ERROR_MESSAGE.value)
+        self.execute_callbacks(CALLBACK_TYPE.ON_REQUEST_FEEDBACK, request_id=req_id, payload=data)
+
+    def _handle_command_active_response(self, data: dict) -> None:
+        self.inc("response_command")
+        if REST_KW.DATA.value not in data:
+            logger.warning(f"no data: {data}")
+            return
+
+        for ident, value in data[REST_KW.DATA.value].items():
+            meta = self.get_command_meta_by_id(int(ident))
+            if meta is not None:
+                webapi_logger.info(f"CMD : {meta.name}={value}")
+                self.execute_callbacks(CALLBACK_TYPE.ON_COMMAND_ACTIVE, command=meta.name, active=value)
+            elif self.all_commands is not None:
+                logger.warning(f"no command for id={self.all_commands.equiv(ident=int(ident))}")
+            else:
+                logger.warning(f"no command for id={ident}")
+
+    def _log_missing_dataref(self, ident: int) -> None:
+        if self.all_datarefs is not None:
+            logger.debug(
+                f"no dataref for id={self.all_datarefs.equiv(ident=ident)} (this may be a previously requested dataref arriving late..., safely ignore)"
+            )
+        else:
+            logger.debug(f"no dataref for id={ident} (this may be a previously requested dataref arriving late..., safely ignore)")
+
+    def _log_bad_dataref_array_value(self, ident: int, value) -> None:
+        if self.all_datarefs is not None:
+            logger.warning(f"dataref array {self.all_datarefs.equiv(ident=ident)} value is not a list ({value}, {type(value)})")
+        else:
+            logger.warning(f"dataref array id={ident} value is not a list ({value}, {type(value)})")
+
+    def _log_missing_dataref_array_meta(self, ident: int) -> None:
+        if self.all_datarefs is not None:
+            logger.warning(f"dataref array {self.all_datarefs.equiv(ident=ident)} meta data not found")
+        else:
+            logger.warning(f"dataref array id={ident} meta data not found")
+
+    def _matching_dataref_array_indices(self, ident: int, meta, value: list):
+        current_indices = meta.indices
+        if len(value) == len(current_indices):
+            return current_indices
+
+        if self.all_datarefs is not None:
+            logger.warning(f"dataref array {self.all_datarefs.equiv(ident=ident)}: size mismatch ({len(value)} vs {len(current_indices)})")
+            logger.warning(f"dataref array {self.all_datarefs.equiv(ident=ident)}: value: {value}, indices: {current_indices})")
+        else:
+            logger.warning(f"dataref array id={ident}: size mismatch ({len(value)} vs {len(current_indices)})")
+            logger.warning(f"dataref array id={ident}: value: {value}, indices: {current_indices})")
+
+        last_indices = meta.last_indices()
+        if len(value) != len(last_indices):
+            logger.warning("no attempt with previously requested indices, no match")
+            return None
+
+        logger.warning("attempt with previously requested indices (we have a match)..")
+        logger.warning(f"dataref array: current value: {value}, previous indices: {last_indices})")
+        return last_indices
+
+    def _handle_dataref_array_update(self, ident: int, dataref: list, value: list) -> None:
+        if type(value) is not list:
+            self._log_bad_dataref_array_value(ident, value)
+            return
+
+        meta = dataref[0].meta
+        if meta is None:
+            self._log_missing_dataref_array_meta(ident)
+            return
+
+        current_indices = self._matching_dataref_array_indices(ident, meta, value)
+        if current_indices is None:
+            return
+
+        for idx, v1 in zip(current_indices, value):
+            d1 = f"{meta.name}[{idx}]"
+            if self.changed(d1, v1):
+                self.inc(d1)
+                self.execute_callbacks(CALLBACK_TYPE.ON_DATAREF_UPDATE, dataref=d1, value=v1)
+            else:
+                self.inc("-" + d1)
+
+    def _handle_dataref_scalar_update(self, dataref: Dataref, value) -> None:
+        parsed_value = dataref.parse_raw_value(value)
+        if self.changed(dataref.path, parsed_value):
+            self.inc(dataref.path)
+            self.execute_callbacks(CALLBACK_TYPE.ON_DATAREF_UPDATE, dataref=dataref.path, value=parsed_value)
+        else:
+            self.inc("-" + dataref.path)
+
+    def _handle_dataref_update_response(self, data: dict) -> None:
+        self.inc("response_update")
+        if REST_KW.DATA.value not in data:
+            logger.warning(f"no data: {data}")
+            return
+
+        for ident, value in data[REST_KW.DATA.value].items():
+            ident = int(ident)
+            dataref = self._dataref_by_id.get(ident)
+            if dataref is None:
+                self._log_missing_dataref(ident)
+                continue
+
+            self.inc("update_dataref")
+            if type(dataref) is list:
+                self._handle_dataref_array_update(ident, dataref, value)
+            else:
+                self._handle_dataref_scalar_update(cast(Dataref, dataref), value)
+
+    def _handle_websocket_message(self, message: str | bytes, lnow: datetime) -> None:
+        data = {}
+        try:
+            data = json.loads(message)
+            resp_type = data[REST_KW.TYPE.value]
+            if resp_type == WS_RESPONSE_TYPE.RESULT.value:
+                self._handle_result_response(data, lnow)
+            elif resp_type == WS_RESPONSE_TYPE.COMMAND_ACTIVE.value:
+                self._handle_command_active_response(data)
+            elif resp_type == WS_RESPONSE_TYPE.DATAREF_UPDATE.value:
+                self._handle_dataref_update_response(data)
+            else:
+                logger.warning(f"invalid response type {resp_type}: {data}")
+        except Exception:
+            logger.warning(f"decode data {data} failed", exc_info=True)
+
+    def _handle_websocket_closed(self) -> None:
+        logger.warning("websocket connection closed")
+        self.ws = None
+        self.ws_lsnr_not_running.set()
+        self.status = CONNECTION_STATUS.WEBSOCKET_DISCONNNECTED  # should check rest api reachable
+        super().connected
+        self.execute_callbacks(CALLBACK_TYPE.ON_CLOSE)
+
+    def _close_websocket_listener(self) -> None:
+        if self.ws is not None:  # in case we did not receive a ConnectionClosed event
+            self.ws.close()
+            self.ws = None
+            self.status = CONNECTION_STATUS.WEBSOCKET_DISCONNNECTED  # should check rest api reachable
+            super().connected
+            self.execute_callbacks(CALLBACK_TYPE.ON_CLOSE)
+        logger.info("..websocket listener terminated")
+
     def ws_listener(self):
         """Read and decode websocket messages and calls back"""
         logger.info("starting websocket listener..")
@@ -634,8 +854,6 @@ class XPWebsocketAPI(XPRestAPI):
         total_reads = 0
         attention = 10
         to_count = 0
-        TO_COUNT_DEBUG = 10
-        TO_COUNT_INFO = 50
         start_time = now()
         last_read_ts = start_time
         total_read_time = 0.0
@@ -645,23 +863,21 @@ class XPWebsocketAPI(XPRestAPI):
 
         while self.websocket_listener_running:
             try:
-                message = self.ws.receive(timeout=self.RECEIVE_TIMEOUT)
-                self.inc("receive_raw")
-                # probably we don't receive messages because X-Plane has nothing to send...
-                if message is None:
-                    if to_count % TO_COUNT_INFO == 0:
-                        logger.debug(f"..receive timeout ({self.RECEIVE_TIMEOUT} secs.), waiting for response from simulator..")  # at {now()}")
-                    elif to_count % TO_COUNT_DEBUG == 0:
-                        logger.debug(f"..receive timeout ({self.RECEIVE_TIMEOUT} secs.), waiting for response from simulator..")  # at {now()}")
+                if self.ws is None:
+                    time.sleep(0.01)
+                    continue
+                try:
+                    message = self.ws.recv(timeout=self.RECEIVE_TIMEOUT)
+                except TimeoutError:
+                    self._log_receive_timeout(to_count)
                     to_count = to_count + 1
                     continue
 
+                self.inc("receive_raw")
                 self.inc("receive")
                 lnow = now()
                 if total_reads == 0:
-                    logger.info(f"..first message at {lnow.replace(microsecond=0)} ({round((lnow - start_time).seconds, 2)} secs.).. {'<'*attention}")
-                    self.status = CONNECTION_STATUS.RECEIVING_DATA
-                    self.RECEIVE_TIMEOUT = 5  # when connected, check less often, message will arrive
+                    self._mark_first_websocket_message(lnow, start_time, attention)
 
                 if to_count > 0:
                     logger.debug("..receive ok..")
@@ -671,135 +887,15 @@ class XPWebsocketAPI(XPRestAPI):
                 total_read_time = total_read_time + delta.microseconds / 1000000
                 last_read_ts = lnow
 
-                # Decode response
-                data = {}
-                resp_type = ""
-                try:
-                    data = json.loads(message)
-                    resp_type = data[REST_KW.TYPE.value]
-                    #
-                    #
-                    if resp_type == WS_RESPONSE_TYPE.RESULT.value:
-
-                        self.inc("response_result")
-                        webapi_logger.info(f"<<RCV  {data}")
-                        req_id = data.get(REST_KW.REQID.value)
-                        if req_id is not None:
-                            self._requests[req_id].ts_ack = lnow
-                            success = data.get(REST_KW.SUCCESS.value)
-                            self._requests[req_id].success = success
-                            if not success:
-                                self._requests[req_id].error = data.get(REST_KW.ERROR_MESSAGE.value)
-                            self.execute_callbacks(CALLBACK_TYPE.ON_REQUEST_FEEDBACK, request_id=req_id, payload=data)
-                    #
-                    #
-                    elif resp_type == WS_RESPONSE_TYPE.COMMAND_ACTIVE.value:
-
-                        self.inc("response_command")
-                        if REST_KW.DATA.value not in data:
-                            logger.warning(f"no data: {data}")
-                            continue
-
-                        for ident, value in data[REST_KW.DATA.value].items():
-                            meta = self.get_command_meta_by_id(int(ident))
-                            if meta is not None:
-                                webapi_logger.info(f"CMD : {meta.name}={value}")
-                                self.execute_callbacks(CALLBACK_TYPE.ON_COMMAND_ACTIVE, command=meta.name, active=value)
-                            else:
-                                logger.warning(f"no command for id={self.all_commands.equiv(ident=int(ident))}")
-                    #
-                    #
-                    elif resp_type == WS_RESPONSE_TYPE.DATAREF_UPDATE.value:
-
-                        self.inc("response_update")
-                        if REST_KW.DATA.value not in data:
-                            logger.warning(f"no data: {data}")
-                            continue
-
-                        for ident, value in data[REST_KW.DATA.value].items():
-                            ident = int(ident)
-                            dataref = self._dataref_by_id.get(ident)
-                            if dataref is None:
-                                logger.debug(
-                                    f"no dataref for id={self.all_datarefs.equiv(ident=int(ident))} (this may be a previously requested dataref arriving late..., safely ignore)"
-                                )
-                                continue
-
-                            self.inc("update_dataref")
-                            if type(dataref) is list:
-                                #
-                                # 1. One or more values from a dataref array (but not all values)
-                                if type(value) is not list:
-                                    logger.warning(f"dataref array {self.all_datarefs.equiv(ident=ident)} value is not a list ({value}, {type(value)})")
-                                    continue
-                                meta = dataref[0].meta
-                                if meta is None:
-                                    logger.warning(f"dataref array {self.all_datarefs.equiv(ident=ident)} meta data not found")
-                                    continue
-                                current_indices = meta.indices
-                                if len(value) != len(current_indices):
-                                    logger.warning(
-                                        f"dataref array {self.all_datarefs.equiv(ident=ident)}: size mismatch ({len(value)} vs {len(current_indices)})"
-                                    )
-                                    logger.warning(f"dataref array {self.all_datarefs.equiv(ident=ident)}: value: {value}, indices: {current_indices})")
-                                    # So! since we totally missed this set of data, we ask for the set again to refresh the data:
-                                    # err = self.send({REST_KW.TYPE.value: "dataref_subscribe_values", REST_KW.PARAMS.value: {REST_KW.DATAREFS.value: meta.indices}}, {})
-                                    last_indices = meta.last_indices()
-                                    if len(value) != len(last_indices):
-                                        logger.warning("no attempt with previously requested indices, no match")
-                                        continue
-                                    else:
-                                        logger.warning("attempt with previously requested indices (we have a match)..")
-                                        logger.warning(f"dataref array: current value: {value}, previous indices: {last_indices})")
-                                        current_indices = last_indices
-                                for idx, v1 in zip(current_indices, value):
-                                    d1 = f"{meta.name}[{idx}]"
-                                    if self.changed(d1, v1):
-                                        self.inc(d1)
-                                        self.execute_callbacks(CALLBACK_TYPE.ON_DATAREF_UPDATE, dataref=d1, value=v1)
-                                    else:
-                                        self.inc("-"+d1)
-                                    # print(f"{d1}={v1}")
-                                # alternative:
-                                # for d in dataref:
-                                #     parsed_value = d.parse_raw_value(value)
-                                #     print(f"{d.name}={parsed_value}")
-                            else:
-                                #
-                                # 2. Scalar value
-                                parsed_value = dataref.parse_raw_value(value)
-                                if self.changed(dataref.path, parsed_value):
-                                    self.inc(dataref.path)
-                                    self.execute_callbacks(CALLBACK_TYPE.ON_DATAREF_UPDATE, dataref=dataref.path, value=parsed_value)
-                                else:
-                                    self.inc("-"+dataref.path)
-                                # print(f"{dataref.name}={parsed_value}")
-                    #
-                    #
-                    else:
-                        logger.warning(f"invalid response type {resp_type}: {data}")
-
-                except:
-                    logger.warning(f"decode data {data} failed", exc_info=True)
+                self._handle_websocket_message(message, lnow)
 
             except ConnectionClosed:
-                logger.warning("websocket connection closed")
-                self.ws = None
-                self.ws_lsnr_not_running.set()
-                self.status = CONNECTION_STATUS.WEBSOCKET_DISCONNNECTED  # should check rest api reachable
-                dummy = super().connected
-                self.execute_callbacks(CALLBACK_TYPE.ON_CLOSE)
+                self._handle_websocket_closed()
 
-            except:
+            except Exception:
                 logger.error("ws_listener error", exc_info=True)
 
-        if self.ws is not None:  # in case we did not receive a ConnectionClosed event
-            self.ws.close()
-            self.ws = None
-            self.status = CONNECTION_STATUS.WEBSOCKET_DISCONNNECTED  # should check rest api reachable
-            dummy = super().connected
-            self.execute_callbacks(CALLBACK_TYPE.ON_CLOSE)
-        logger.info("..websocket listener terminated")
+        self._close_websocket_listener()
 
     @property
     def websocket_listener_running(self) -> bool:
@@ -876,28 +972,29 @@ class XPWebsocketAPI(XPRestAPI):
             time.sleep(1)
         logger.debug("..connected")
 
-    def monitor_datarefs(self, datarefs: dict, reason: str | None = None) -> Tuple[int | bool, Dict]:
+    def monitor_datarefs(self, datarefs: DatarefBatch, reason: str | None = None) -> tuple[int | bool, dict]:
         """Starts monitoring of supplied datarefs.
 
-        [description]
+        Sends a single WebSocket subscribe request for all newly monitored datarefs.
 
         Args:
-            datarefs (dict): {path: Dataref} dictionary of datarefs
+            datarefs (DatarefBatch): Mapping of {path: Dataref} or iterable of datarefs.
             reason (str | None): Documentation only string to identify call to function.
 
         Returns:
-            Tuple[int | bool, Dict]: [description]
+            tuple[int | bool, dict]: Request id or False, and effective datarefs by name.
         """
+        requested = self._dataref_batch_values(datarefs)
         if not self.connected:
-            logger.debug(f"would add {datarefs.keys()}")
+            logger.debug(f"would add {[d.name for d in requested]}")
             return (False, {})
-        if len(datarefs) == 0:
+        if len(requested) == 0:
             logger.debug("no dataref to add")
             return (False, {})
         # Add those to monitor
         bulk = {}
         effectives = {}
-        for d in datarefs.values():
+        for d in requested:
             if not d.is_monitored:
                 ident = d.ident
                 if ident is not None:
@@ -926,28 +1023,29 @@ class XPWebsocketAPI(XPRestAPI):
             logger.debug("no dataref to add")
         return ret, effectives
 
-    def unmonitor_datarefs(self, datarefs: dict, reason: str | None = None) -> Tuple[int | bool, Dict]:
+    def unmonitor_datarefs(self, datarefs: DatarefBatch, reason: str | None = None) -> tuple[int | bool, dict]:
         """Stops monitoring supplied datarefs.
 
-        [description]
+        Sends a single WebSocket unsubscribe request for all datarefs whose monitor count reaches zero.
 
         Args:
-            datarefs (dict): {path: Dataref} dictionary of datarefs
+            datarefs (DatarefBatch): Mapping of {path: Dataref} or iterable of datarefs.
             reason (str | None): Documentation only string to identify call to function.
 
         Returns:
-            Tuple[int | bool, Dict]: [description]
+            tuple[int | bool, dict]: Request id or False, and effective datarefs by name.
         """
+        requested = self._dataref_batch_values(datarefs)
         if not self.connected:
-            logger.debug(f"would remove {datarefs.keys()}")
+            logger.debug(f"would remove {[d.name for d in requested]}")
             return (False, {})
-        if len(datarefs) == 0:
+        if len(requested) == 0:
             logger.debug("no variable to remove")
             return (False, {})
         # Add those to monitor
         bulk = {}
         effectives = {}
-        for d in datarefs.values():
+        for d in requested:
             if d.is_monitored:
                 effectives[d.name] = d
                 if not d.dec_monitor():  # will be decreased by 1 in super().remove_simulator_variable_to_monitor()
@@ -971,7 +1069,10 @@ class XPWebsocketAPI(XPRestAPI):
                 if i in self._dataref_by_id:
                     del self._dataref_by_id[i]
                 else:
-                    logger.warning(f"no dataref for id={self.all_datarefs.equiv(ident=i)}")
+                    if self.all_datarefs is not None:
+                        logger.warning(f"no dataref for id={self.all_datarefs.equiv(ident=i)}")
+                    else:
+                        logger.warning(f"no dataref for id={i}")
             dlist = []
             for d in bulk.values():
                 if type(d) is list:
@@ -1015,7 +1116,7 @@ class XPWebsocketAPI(XPRestAPI):
         ret = self.unmonitor_datarefs(datarefs={dataref.path: dataref}, reason="unmonitor_dataref")
         return ret[0]
 
-    def write_dataref(self, dataref: Dataref) -> bool | int:
+    def write_dataref(self, dataref: Dataref) -> APIResult:
         """Writes dataref value to simulator.
 
         Writing is done through REST API if use_rest is True, or Websocket API if use_rest is False and Websocket is opened.
@@ -1061,7 +1162,7 @@ class XPWebsocketAPI(XPRestAPI):
     #     # deprecated, name is too common, too simple
     #     return self.execute_command(command=command, duration=duration)
 
-    def execute_command(self, command: Command, duration: float = 0.0) -> bool | int:
+    def execute_command(self, command: Command, duration: float = 0.0) -> APIResult:
         """Execute command in simulator.
 
         Execution is done through REST API if use_rest is True, or Websocket API if use_rest is False and Websocket is opened.

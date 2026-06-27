@@ -1,0 +1,3 @@
+# Beacon
+
+::: xpwebapi.beacon
