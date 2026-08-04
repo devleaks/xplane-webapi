@@ -142,7 +142,7 @@ class FDR(XPWSAPIApp):
             print(f"ACFT, {self.dataref_value('sim/aircraft/view/acf_relative_path', is_string=True)}", file=fp)
             print(f"TAIL, {self.dataref_value('sim/aircraft/view/acf_tailnum', is_string=True)}", file=fp)
             print(
-                f"DATE, {self.dataref_value('sim/cockpit2/clock_timer/current_month')}/{self.dataref_value('sim/cockpit2/clock_timer/current_day')}/2025",
+                f"DATE, {self.dataref_value('sim/cockpit2/clock_timer/current_month')}/{self.dataref_value('sim/cockpit2/clock_timer/current_day')}/{datetime.datetime.now().year}",
                 file=fp,
             )  # MM/DD/YYYY
             print(f"PRES, {self.dataref_value('sim/weather/barometer_sealevel_inhg', rounding=2)}", file=fp)

@@ -115,6 +115,7 @@ class XPWebsocketAPI(XPRestAPI):
             "request": 0,
             "message": 0,
             "update": 0,
+            "maxrequest": 0,
         }
 
         self.slow_stop = threading.Event()
@@ -487,6 +488,17 @@ class XPWebsocketAPI(XPRestAPI):
                 else:
                     mapping[d.ident] = d.name
             action = "dataref_subscribe_values" if on else "dataref_unsubscribe_values"
+
+            # TOTAL="total"
+            # if on:
+            #     self.inc(TOTAL, len(drefs))
+            #     logger.debug(f"requested +++ {len(drefs)} {self._stats[TOTAL]}")
+            #     if self._stats[TOTAL] > self._stats["maxrequest"]:
+            #         self._stats["maxrequest"] = self._stats[TOTAL]
+            # else:
+            #     self.inc(TOTAL, -len(drefs))
+            #     logger.debug(f"requested --- {len(drefs)} {self._stats[TOTAL]}")
+
             return self.send({REST_KW.TYPE.value: action, REST_KW.PARAMS.value: {REST_KW.DATAREFS.value: drefs}}, mapping)
         if on:
             action = "register" if on else "unregister"
@@ -758,7 +770,8 @@ class XPWebsocketAPI(XPRestAPI):
                                         self.inc(d1)
                                         self.execute_callbacks(CALLBACK_TYPE.ON_DATAREF_UPDATE, dataref=d1, value=v1)
                                     else:
-                                        self.inc("-"+d1)
+                                        self.inc("-" + d1)
+                                        self.inc("skipped")
                                     # print(f"{d1}={v1}")
                                 # alternative:
                                 # for d in dataref:
@@ -772,7 +785,8 @@ class XPWebsocketAPI(XPRestAPI):
                                     self.inc(dataref.path)
                                     self.execute_callbacks(CALLBACK_TYPE.ON_DATAREF_UPDATE, dataref=dataref.path, value=parsed_value)
                                 else:
-                                    self.inc("-"+dataref.path)
+                                    self.inc("-" + dataref.path)
+                                    self.inc("skipped")
                                 # print(f"{dataref.name}={parsed_value}")
                     #
                     #

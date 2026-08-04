@@ -202,6 +202,7 @@ class API(ABC):
 
         self._show_stats = True
         self._stats = {}
+        self._timed_stats = {}
 
         self.set_network(host=host, port=port, api=api, api_version=api_version)
 
@@ -254,6 +255,14 @@ class API(ABC):
         self._stats[name] = self._stats[name] + count
         if self._show_stats and (self._stats[name] % 500 == 0 or ("/" in name and self._stats[name] % 100 == 0)):
             logger.info(f"*** web api stats: {name}: {self._stats[name]}")
+            # if name == "skipped":
+            #     a = self._stats[name]
+            #     name = "callback"
+            #     logger.info(f"*** web api stats: {name}: {self._stats[name]} ({round(100*self._stats[name]/a, 1)}%)")
+            #     self.collect()
+
+    def collect(self):
+        self._timed_stats[datetime.now().timestamp()] = self._stats.copy()
 
     def set_network(self, host: str, port: int, api: str, api_version: str) -> bool:
         """Set network and API parameters for connection
