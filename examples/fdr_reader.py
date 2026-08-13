@@ -1,32 +1,53 @@
-from pprint import pprint
 import json
 from datetime import datetime, timedelta, timezone
+from pprint import pprint
 
-COMMENTS = "COMM"
+from fdr import FDRData  # used in eval(), FDRData is a @dataclass
 
-VALID_KEYWORDS = [
+HEADER_KEYWORDS = [
   "ACFT",
   "TAIL",
+  "TIME",
   "DATE",
   "PRES",
-  "DISA",
+  "TEMP",
   "WIND",
+  "DISA",
 ]
+
+DATA_KEYWORDS = [
+  "COMM",
+  "DREF",
+  "CALI",
+  "WARN",
+  "TEXT",
+  "MARK",
+  "EVNT",
+  "DATA",
+]
+
+def clean(s: str) -> tuple:
+  SEP = ","
+  a = [b.strip() for b in s.split(SEP)]
+  return a[0], SEP.join(a[1:]), s[s.index(SEP)+1:].strip()
+
 
 class FDRReader:
 
-  def __init__(self, filename: str) -> None:
+  def __init__(self, filename: str = "out.fdr") -> None:
     self.filename = filename
+    self.fdr_version = 0
 
     with open(self.filename) as fp:
       self.lines = [l.strip() for l in fp.readlines()]
 
     self.basedate = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).astimezone()
-    self.meta = {
-      COMMENTS: []
-    }
+    self.meta = {k: list() for k in DATA_KEYWORDS}
+    self.units = []
     self.header = []
     self.data = []
+    self._last_ts = None
+    self.fdr_data = {}
 
   @property
   def duration(self) -> timedelta:
@@ -38,6 +59,10 @@ class FDRReader:
   def length(self) -> int:
     return len(self.data)
 
+  @property
+  def has_fdrdata(self) -> bool:
+    return len(self.fdr_data) > 0
+
   def parse(self) -> bool:
     #
     # ACFT, Aircraft/Airbus/ToLiss A321/a321.acf
@@ -47,7 +72,7 @@ class FDRReader:
     # DISA, 0
     # WIND, 270, 2.61
     #
-    last_comm = None
+    header_out = False
 
     if self.lines[0] != "A":
       print(f"invalid X-Plane FDR file ({self.lines[0]})")
@@ -57,47 +82,93 @@ class FDRReader:
       print(f"invalid X-Plane FDR file version ({self.lines[1]})")
       return False
 
+    self.fdr_version = int(self.lines[1])
+    print(f"FDR data format version {self.fdr_version}")
+
     i = 2
     while i < len(self.lines):
       if len(self.lines[i]) == 0:
         i += 1
         continue
-      if self.lines[i].startswith("COMM,"):
-        last_comm = self.lines[i]
-        self.meta[COMMENTS].append(self.lines[i][5:].strip())
+
+      currline = self.lines[i]
+      k, data, text = clean(currline)
+
+      if k in HEADER_KEYWORDS:
+        if k in self.meta:
+          print(f"warning: header keyword {k} value overwritten {self.meta[k]} -> {currline[5:].strip()}")
+        self.meta[k] = text
         i += 1
         continue
-
-      if len(self.lines[i]) > 5 and self.lines[i][4] == ",":
-        k = self.lines[i][:4]
-        if k in VALID_KEYWORDS:
-          if k in self.meta:
-            print(f"warning: keyword {k} overwritten")
-          self.meta[k] = self.lines[i][5:].strip()
+      elif k in DATA_KEYWORDS and k != "DATA":
+        if k == "COMM":
+          if text.startswith("FDRData("):
+            try:
+              print(text)
+              fdrdata = eval(text)
+              self.fdr_data[fdrdata.name] = fdrdata
+              # print(t)
+            except:
+              print("failed to eval(), skipped", text)
+            i += 1
+            continue
+        self.meta[k].append((self._last_ts, text))
         i += 1
         continue
 
       # else, probably data...
-      if last_comm is not None:
-        self.header = [l.strip() for l in last_comm[5:].split(",")]
-        last_comm = None
+      # if first data encounted, hope last comment was column headings
+      if not header_out and len(self.meta["COMM"]) > 0:
+        if self.has_fdrdata:
+          self.header = ["UTC Time"] + list(self.fdr_data.keys())
+        else:
+          self.header = [l.strip() for l in self.meta["COMM"][-1][1].split(",")]
+        print(f"Header {', '.join(self.header)}")
+        header_out = True
 
-      self.data.append([l.strip() for l in self.lines[i].split(",")])
+      if self.fdr_version == 3 and k == "DATA":
+        self.data.append([l.strip() for l in data.split(",")])
+      else:
+        self.data.append([l.strip() for l in currline.split(",")])
+      ts = datetime.strptime(self.data[-1][0].strip(), "%H:%M:%S.%f")
+      self._last_ts = ts.replace(tzinfo=timezone.utc, day=self.basedate.day, month=self.basedate.month, year=self.basedate.year)
       i += 1
 
+    if self.has_fdrdata:
+    #   print(f"FDRData for {', '.join(self.fdr_data)}")
+      if len(self.header) - 1 != len(self.fdr_data):
+        print(f"Header column vs FDRData mismatch {len(self.header) - 1}/{len(self.fdr_data)}")
+
     if "DATE" in self.meta:
-      self.basedate = datetime.strptime(self.meta["DATE"], "%m/%d/%Y")
-      print("Date:", self.basedate)
+      self.basedate = datetime.strptime(self.meta["DATE"], "%m/%d/%Y").astimezone(tz=timezone.utc)
+      print("Date:", self.basedate.isoformat())
 
     return True
 
-  def to_geojson(self, outfile: str):
+  def properties(self, data) -> dict:
+    props = {}
+    for dref, v in zip(self.header[1:], data):
+      if self.has_fdrdata:
+        meta = self.fdr_data[dref]
+        if meta.dtype =="int":
+          props[dref] = int(v)
+        elif meta.dtype =="float":
+          props[dref] = float(v)
+        else:
+          props[dref] = v
+      else:
+        props[dref] = v
+    return props # {self.header[i]: float(data[i].strip()) for i in range(1, len(data))}
+
+  def to_geojson(self, outfile: str, altitude: bool = False):
     # Assumes all data are float except first one that is a timestamp
     # TS is datetime.now(datetime.UTC).strftime("%H:%M:%S.%f, ")
     features = []
     lines = []
     for row in self.data:
       p = [float(row[1]), float(row[2])]
+      if altitude:
+        p.append(float(row[3]) / 3.28084)
       lines.append(p)
       ts = datetime.strptime(row[0].strip(), "%H:%M:%S.%f")
       ts = ts.replace(tzinfo=timezone.utc, day=self.basedate.day, month=self.basedate.month, year=self.basedate.year)
@@ -106,7 +177,7 @@ class FDRReader:
         "geometry": {
           "type": "Point",
           "coordinates": p,
-          "properties": {self.header[0]: ts.isoformat()} | {self.header[i]: float(row[i].strip()) for i in range(1, len(row))}
+          "properties": {self.header[0]: ts.isoformat()} | self.properties(row[1:])
         }
       })
 
@@ -127,11 +198,11 @@ class FDRReader:
         }, geoj, indent=4)
 
 
-a = FDRReader("test1.fdr")
+a = FDRReader()
 if a.parse():
-  print("Fields:", a.header)
-  pprint(a.meta)
-  a.to_geojson(outfile="test1.geojson")
+  # print("Fields:", a.header)
+  pprint(a.meta, width=120)
+  a.to_geojson(outfile="test2.geojson", altitude=True)
   print(f"{a.length} points written, duration={a.duration}")
 else:
   print("failed to parse")

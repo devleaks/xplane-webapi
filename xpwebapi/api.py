@@ -201,6 +201,9 @@ class API(ABC):
         self._roundings = None
 
         self._show_stats = True
+        self._show_stats_upd = 1000
+        self._show_stats_drf = 500
+        self._show_stats_wrt = 500
         self._stats = {}
         self._timed_stats = {}
 
@@ -253,7 +256,7 @@ class API(ABC):
         if name not in self._stats:
             self._stats[name] = 0
         self._stats[name] = self._stats[name] + count
-        if self._show_stats and (self._stats[name] % 500 == 0 or ("/" in name and self._stats[name] % 100 == 0)):
+        if self._show_stats and (self._stats[name] % self._show_stats_upd == 0 or ("/" in name and self._stats[name] % self._show_stats_drf == 0)):
             logger.info(f"*** web api stats: {name}: {self._stats[name]}")
             # if name == "skipped":
             #     a = self._stats[name]

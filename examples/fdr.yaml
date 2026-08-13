@@ -1,0 +1,23 @@
+frequency: 5
+report_frequency: 200
+fdr_optional:
+  - name: ground_speed
+    dataref: sim/flightmodel/position/groundspeed
+    unit: m/s
+  - name: true_air_speed
+    dataref: sim/flightmodel/position/true_airspeed
+    unit: m/s
+  - name: vspeed
+    dataref: sim/cockpit2/gauges/indicators/vvi_fpm_pilot
+    unit: ft/min
+    callback: "lambda x: x * 1.0"
+  - name: tracking
+    dataref: sim/cockpit2/gauges/indicators/ground_track_true_pilot
+    unit: T
+  - name: Freq1
+    dataref: AirbusFBW/DRAIMS1/HFStbyFreqs[0]
+    unit: MHz
+  - name: Freq2
+    dataref: AirbusFBW/DRAIMS1/HFStbyFreqs[1]
+    unit: MHz
+    callback: "lambda x: x / 2.0"
