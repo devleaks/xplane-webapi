@@ -35,13 +35,12 @@ from .flight import (
     WeatherPreset,
     WeatherEvolution,
     TerrainState,
-    UseRealWeather,
     CloudType,
     CloudLayer,
     WindLayer,
     WeatherDefinition,
+    UseRealWeather,
     WeatherScenario,
-    Weather,
     Flight)
 
 
@@ -63,4 +62,4 @@ def udp_api(**kwargs):
     return XPUDPAPI(**kwargs)
 
 
-version = "3.5.2"
+version = "3.6.0"

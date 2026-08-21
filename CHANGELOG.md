@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 3.5.0 - 2026-08-21
+
+Added v3 flight initialisation and update REST procedures.
+Added extensive Flight description with Python classes.
+
 ## 3.2.0 - 2025-08-09
 
 Breaking change, `api.execute()` is now more explicitely `api.execute_command()`.
