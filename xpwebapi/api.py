@@ -62,6 +62,7 @@ class XPLANE_API_VERSIONS(Enum):
 
     v1 = "12.1.1"
     v2 = "12.1.4"
+    v3 = "12.4.0"
 
 
 SORT_INDICES = False

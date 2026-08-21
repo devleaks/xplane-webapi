@@ -10,6 +10,7 @@ import requests
 from natsort import natsorted
 
 from .api import CONNECTION_STATUS, DATAREF_DATATYPE, API, Dataref, DatarefMeta, Command, CommandMeta, Cache, webapi_logger, DatarefValueType
+from .flight import Flight
 
 # local logging
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ class REST_KW(Enum):
     DURATION = "duration"
     ERROR_MESSAGE = "error_message"
     ERROR_CODE = "error_code"
+    FLIGHT = "flight"
     IDENT = "id"
     INDEX = "index"
     ISACTIVE = "is_active"
@@ -568,3 +570,33 @@ class XPRestAPI(API):
                 logger.info(f"XPlane API at {self.rest_url} from UDP beacon data{use_rest}")
         else:
             logger.warning(f"could not get X-Plane version from beacon data {beacon_data}")
+
+    # API V3: Start and update flight condition
+    #
+    def start_flight(self, flight: Flight) -> bool:
+        payload = {"data": flight.toDict()}
+        url = f"{self.rest_url}/{REST_KW.FLIGHT}"
+        self.inc("flight")
+        response = self.session.post(url, json=payload)
+        webapi_logger.info(f"POST start_flight: {url} {payload} {response}")
+        data = response.json()
+        if response.status_code == 200:
+            logger.debug(f"result: {data}")
+            return True
+        webapi_logger.info(f"ERROR start_flight: {response} {response.reason} {response.text}")
+        logger.error(f"start_flight: {response}, {data}")
+        return False
+
+    def update_flight(self, flight: Flight) -> bool:
+        payload = {"data": flight.toDict()}
+        url = f"{self.rest_url}/{REST_KW.FLIGHT}"
+        self.inc("update flight")
+        response = self.session.patch(url, json=payload)
+        webapi_logger.info(f"PATCH update_flight: {url} {payload} {response}")
+        data = response.json()
+        if response.status_code == 200:
+            logger.debug(f"result: {data}")
+            return True
+        webapi_logger.info(f"ERROR update_flight: {response} {response.reason} {response.text}")
+        logger.error(f"start_flight: {response}, {data}")
+        return False
