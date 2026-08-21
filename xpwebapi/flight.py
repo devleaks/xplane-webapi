@@ -527,17 +527,21 @@ class Flight:
     incursion: Incursion | None = None
     weapons: List[Weapon] | None = None
 
+    update: bool = False  # set it to True if Flight is an update of existing flight
+
     def toDict(self) -> Dict:
         d = {}
 
         # Aircraft
-        add_required(self, "aircraft", d)
+        if not self.update:
+            add_required(self, "aircraft", d)
         add_required(self, "weight", d)
         add_required(self, "engine_status", d)
         add_optional(self, "failures", d)
 
         # Location
-        d = d | {ccname(type(self.start_location).__name__): self.start_location.toDict()}
+        if not self.update:
+            d = d | {ccname(type(self.start_location).__name__): self.start_location.toDict()}
 
         # Environment
         d = d | {ccname(type(self.time).__name__): self.time.toDict()}
@@ -553,21 +557,30 @@ class Flight:
 
         return d
 
+    def start(self, api):
+        self.update = False
+        api.start_flight(flight=self)
+
+    def update(self, api):
+        self.update = True
+        api.update_flight(flight=self)
+
 # TESTS
 #
 # Minimal
 if __name__ == "__main__":
     print(json.dumps(Flight(
         # Aircraft
-        aircraft=Aircraft(path="airbus/a320.acf"),
+        # update=True,
+        aircraft=Aircraft(path="Aircraft/Airbus/ToLiss A321/a321.acf"),
         engine_status=Engine(all_engine=EngineStatus(running=True)),
-        weight=Weight(payload_weight_in_kilograms=[42], fueltank_weight_in_kilograms=[5000]),
-        failures=Failures(mean_time_between_failures_in_hours=0.25, operation_failures=[Failure(name="engine1", status="false", value=1.0)]),
+        weight=Weight(payload_weight_in_kilograms=[4200, 1000], fueltank_weight_in_kilograms=[5000, 2000]),
+        # failures=Failures(mean_time_between_failures_in_hours=0.25, operation_failures=[Failure(name="engine1", status="false", value=1.0)]),
         # Location
         start_location=RunwayStart(airport_id="EBBR", runway="27R"),
         # Environment
         time=UseSystemTime(),
-        # weather=Weather(weather=UseRealWeather.USE_REAL_WEATHER),
+        weather=Weather(weather=UseRealWeather.USE_REAL_WEATHER),
         # weather=Weather(
         #     weather=WeatherScenario(
         #         definition=WeatherPreset.VFR_FEW_CLOUDS,
@@ -579,24 +592,24 @@ if __name__ == "__main__":
         #         evolution_over_time_enum=WeatherEvolution.STATIC,
         #     )
         # ),
-        weather=Weather(
-            weather=WeatherScenario(
-                definition=WeatherDefinition(
-                    latitude_in_degrees=123.3,
-                    longitude_in_degrees=41.5,
-                    elevation_in_meters=173,
-                    visibility_in_kilometers=12.5,
-                    temperature_in_degrees_celsius=21
-                ),
-                vertical_speed_in_thermal_in_feet_per_minute=250,
-                wave_height_in_meters=2,
-                wave_direction_in_degrees=200,
-                terrain_state=TerrainState.DRY,
-                variation_across_region_percentage=100,
-                evolution_over_time_enum=WeatherEvolution.STATIC,
-            )
-        ),
-        ai_aircraft=[AIAircraft(aircraft=Aircraft(path="A350"), mission=Mission.ATC)],
+        # weather=Weather(
+        #     weather=WeatherScenario(
+        #         definition=WeatherDefinition(
+        #             latitude_in_degrees=123.3,
+        #             longitude_in_degrees=41.5,
+        #             elevation_in_meters=173,
+        #             visibility_in_kilometers=12.5,
+        #             temperature_in_degrees_celsius=21
+        #         ),
+        #         vertical_speed_in_thermal_in_feet_per_minute=250,
+        #         wave_height_in_meters=2,
+        #         wave_direction_in_degrees=200,
+        #         terrain_state=TerrainState.DRY,
+        #         variation_across_region_percentage=100,
+        #         evolution_over_time_enum=WeatherEvolution.STATIC,
+        #     )
+        # ),
+        # ai_aircraft=[AIAircraft(aircraft=Aircraft(path="A350"), mission=Mission.ATC)],
         # Game stuff: AI aircrafts, etc.
         ).toDict(), indent=4))
 

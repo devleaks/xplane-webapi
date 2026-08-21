@@ -575,7 +575,7 @@ class XPRestAPI(API):
     #
     def start_flight(self, flight: Flight) -> bool:
         payload = {"data": flight.toDict()}
-        url = f"{self.rest_url}/{REST_KW.FLIGHT}"
+        url = f"{self.rest_url}/{REST_KW.FLIGHT.value}"
         self.inc("flight")
         response = self.session.post(url, json=payload)
         webapi_logger.info(f"POST start_flight: {url} {payload} {response}")
@@ -589,7 +589,7 @@ class XPRestAPI(API):
 
     def update_flight(self, flight: Flight) -> bool:
         payload = {"data": flight.toDict()}
-        url = f"{self.rest_url}/{REST_KW.FLIGHT}"
+        url = f"{self.rest_url}/{REST_KW.FLIGHT.value}"
         self.inc("update flight")
         response = self.session.patch(url, json=payload)
         webapi_logger.info(f"PATCH update_flight: {url} {payload} {response}")
