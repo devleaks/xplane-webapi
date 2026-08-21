@@ -43,9 +43,6 @@ from .flight import (
     WeatherScenario,
     Flight)
 
-
-Flight, Aircraft, Engine, EngineStatus, Weight, UseSystemTime, UseRealWeather, RunwayStart, RampStart, BoatStart, Weather
-
 def beacon():
     return XPBeaconMonitor()
 
