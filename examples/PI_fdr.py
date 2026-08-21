@@ -38,21 +38,12 @@ DISA, 0
 WIND, 270,15
 
 By convention, last comment before data contains the header column name (FDRData.name)
-
-### Changelog
-
-
-### To do, idea, suggestions
-
-Per aircraft "preference" file to monitor different sets of datarefs
-Either a fdr.prf in the acf folder or a preference file named after the acf, or a acf section in the pref file?
-
 """
 
 import os
 import inspect
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from traceback import print_stack
 from typing import Tuple, Callable, Any
 from dataclasses import dataclass
@@ -78,28 +69,14 @@ except ModuleNotFoundError:
     missing_modules.append("ruamel.yaml")
 
 
-# Constants
+
+# Changelog
+
+
+# To do, idea, suggestions
 #
-PLUGIN_ROOT_PATH = os.path.dirname(os.path.abspath(__file__))  # .../PythonPlugins
-SCRIPT_NAME = os.path.basename(__file__)
-
-SHOW_TRACE = True
-NAME = "FDR"
-DESCRIPTION = "Flight Data Recordder"
-VERSION = "3.0.0"
-
-FDR_PREFERENCE_FILE = "fdr.yaml"
-FDR_VERSION = 4
-FDR_ARCH = "Apple"  # "IBM"
-
-WRITE_FREQUENCY = 1.0  # seconds
-REPORT_FREQUENCY = 100 # number of writes
-
-FDR_MENU = "Start or stop FDR"
-FDR_RESET_COMMAND = "xppython3/fdr/main_toggle"
-FDR_RESET_COMMAND_DESC = "Start or stop a new FDR session"
-FDR_PLUGIN_SIGNATURE = "com.xppython3.fdr"
-
+# Per aircraft "preference" file to monitor different sets of datarefs
+# Either a fdr.prf in the acf folder or a preference file named after the acf, or a acf section in the pref file?
 
 # Helper Data Class container
 #
@@ -155,16 +132,11 @@ class FDRData:
         return v
 
 
-# #######################################
-# Flight Data Recorder
-#
-#
-
 # Collected once for session, displayed in FDR report header
 HEADER = [
     FDRData(name="ACFT", dataref="sim/aircraft/view/acf_relative_path"),
     FDRData(name="TAIL", dataref="sim/aircraft/view/acf_tailnum"),
-#    FDRData(name="ICAO", dataref="sim/aircraft/view/acf_ICAO"),
+    # FDRData(name="ICAO", dataref="sim/aircraft/view/acf_ICAO"),
     FDRData(name="DMON", dataref="sim/cockpit2/clock_timer/current_month"),
     FDRData(name="DDAY", dataref="sim/cockpit2/clock_timer/current_day"),
     FDRData(name="SEAL", dataref="sim/weather/region/sealevel_pressure_pas", callback=lambda x: x * 0.00029529980164712),  # 1 pascal = 0.00029529980164712 in hg
@@ -173,6 +145,7 @@ HEADER = [
     FDRData(name="DISA", dataref="sim/weather/region/temperatures_aloft_deg_c[0]"),
     FDRData(name="ZDAY", dataref="sim/time/zulu_date_days"),  # used to get simulator time
     FDRData(name="ZSEC", dataref="sim/time/zulu_time_sec"),  # used to get simulator date (assume current year)
+    FDRData(name="MOVE", dataref="sim/flightmodel2/position/groundspeed"),
 ]
 
 # "Mandatory" FDR data at start of each CSV line
@@ -188,6 +161,34 @@ FDR_DATA = [
     FDRData(name="roll", dataref="sim/cockpit2/gauges/indicators/roll_electric_deg_pilot"),
 ]
 
+
+# Constants
+#
+PLUGIN_ROOT_PATH = os.path.dirname(os.path.abspath(__file__))  # .../PythonPlugins
+SCRIPT_NAME = os.path.basename(__file__)
+
+SHOW_TRACE = True
+NAME = "FDR"
+DESCRIPTION = "Flight Data Recordder"
+VERSION = "3.0.0"
+
+FDR_PREFERENCE_FILE = "fdr.yaml"
+
+FDR_VERSION = 4
+FDR_ARCH = "Apple"  # "IBM"
+
+WRITE_FREQUENCY = 1.0  # seconds
+REPORT_FREQUENCY = 100 # number of writes
+
+FDR_MENU = "Start or stop FDR"
+FDR_RESET_COMMAND = "xppython3/fdr/main_toggle"
+FDR_RESET_COMMAND_DESC = "Start or stop a new FDR session"
+FDR_PLUGIN_SIGNATURE = "com.xppython3.fdr"
+
+AUTOSTART = True
+AUTOSTART_FREQUENCY = 2.0  # secs
+AUTOSTART_THRESHOLD = 2.0  # m/s
+AUTOSTOP_THRESHOLD = 600.0  # seconds
 
 class PythonInterface:
 
@@ -207,6 +208,9 @@ class PythonInterface:
         self.flightLoop = None
         self.refFlightLoop = dict()
 
+        self.autoStartLoop = None
+        self.refAutoStartLoop = dict()
+
         self.file = None
         self.prefs = {}
 
@@ -222,6 +226,7 @@ class PythonInterface:
         if self.version not in [3, 4]:
             self.version = FDR_VERSION
         self.start_time = None
+        self.last_stop = None
         self.writes = 0
 
     @property
@@ -232,7 +237,7 @@ class PythonInterface:
         if self.trace or force:
             print(self.Info, message)
 
-    def XPluginStart(self) -> Tuple[str, str, str]:
+    def XPluginStart(self) -> tuple[str, str, str]:
         self.debug("FDR::XPluginStart: starting..")
 
         try:
@@ -343,21 +348,32 @@ class PythonInterface:
 
     def loadPreferences(self) -> bool:
         acffile = os.path.join(xp.getSystemPath(), self.header.get("ACFT").value)
-        if os.path.exists(acffile):
-            self.debug(f"FDR::loadPreferences: aircraft preference file found at {acffile}, not loaded", force=True)
-        preffile = os.path.join(xp.getSystemPath(), "Output", "preferences", FDR_PREFERENCE_FILE)
-        if os.path.exists(preffile):
+        acffile = os.path.join(os.path.dirname(acffile), FDR_PREFERENCE_FILE)
+        acfpref = False
+        if os.path.exists(acffile):  # try aircraft-specific pref
+            self.debug(f"FDR::loadPreferences: aircraft preference file found at {acffile}", force=True)
             try:
-                with open(preffile, "r") as fp:
+                with open(acffile, "r") as fp:
                     self.prefs = yaml.load(fp)
-                self.debug(f"FDR::loadPreferences: {preffile} loaded")
-            except:
-                print_stack()
-                self.prefs = {}
-                return False
-        else:
-            self.debug(f"FDR::loadPreferences: no preference file {preffile}")
-            return True
+                self.debug(f"FDR::loadPreferences: {acffile} loaded")
+                acfpref = True
+            except Exception as e:
+                print("error", e)
+
+        if not acfpref:  # try generic pref
+            preffile = os.path.join(xp.getSystemPath(), "Output", "preferences", FDR_PREFERENCE_FILE)
+            if os.path.exists(preffile):
+                try:
+                    with open(preffile, "r") as fp:
+                        self.prefs = yaml.load(fp)
+                    self.debug(f"FDR::loadPreferences: {preffile} loaded")
+                except Exception as e:
+                    print("error", e)
+                    self.prefs = {}
+                    return False
+            else:
+                self.debug(f"FDR::loadPreferences: no preference file {preffile}")
+                return True
 
         self.frequency = abs(max(self.prefs.get("frequency", WRITE_FREQUENCY), WRITE_FREQUENCY))  # no per frame request
         self.report_frequency = max(self.prefs.get("report_frequency", REPORT_FREQUENCY), REPORT_FREQUENCY)  # set to 0 to ignore
@@ -386,6 +402,10 @@ class PythonInterface:
             self.debug(f"FDR::loadPreferences: added {len(self.fdr_optional)} datarefs to monitor", force=True)
 
         self.debug("FDR::loadPreferences: loaded", force=True)
+
+        if AUTOSTART:
+            self.autoStart()
+
         return True
 
     def csv_header_line(self):
@@ -402,7 +422,7 @@ class PythonInterface:
         print(f"DISA, {round(self.header.get('DISA').value[0], 2)}", file=self.file)
         print(f"WIND, {int(self.header.get('WDIR').value)}," +
                    f" {round(self.header.get('WSPD').value, 2)}", file=self.file)
-#        print(f"COMM, Aircraft ICAO Model {self.header.get('ICAO').value}", file=self.file)
+        # print(f"COMM, Aircraft ICAO Model {self.header.get('ICAO').value}", file=self.file)
 
         # FDR Datarefs
         if len(self.fdr_optional) > 0:
@@ -450,6 +470,7 @@ class PythonInterface:
     def start(self):
         if self.file is not None:
             self.start_time = self.simulator_zulu_datetime
+            self.last_stop = None
             self.writes = 0
             self.csv_header_line()
             if self.flightLoop is None:
@@ -464,5 +485,48 @@ class PythonInterface:
             xp.destroyFlightLoop(self.flightLoop)
             self.flightLoop = None
         self.debug("FDR::stop: stopped")
+
+    def autoStartLoop(self, elapsedSinceLastCall, elapsedTimeSinceLastFlightLoop, counter, inRefcon):
+        if self.header.get("MOVE").value > AUTOSTART_THRESHOLD:
+            self.debug("FDR::autoStartLoop: move detected, starting FDR..")
+            if self.file is None:  # toggle ON
+                outfile = os.path.join(xp.getSystemPath(), "Output", "fdr")
+                if not os.path.isdir(outfile):
+                    os.makedirs(outfile)
+                outfile = os.path.join(outfile, f"fdr{self.simulator_zulu_datetime.strftime("%Y%m%d%H%M%S")}.fdr")
+                self.file = open(outfile, "w")
+                self.start()
+                self.debug(f"FDR::autoStartLoop: ..started, saving FDR{self.version} into {outfile}", force=True)
+                xp.checkMenuItem(xp.findPluginsMenu(), self.menuIdx, 2)
+            else:
+                self.debug("FDR::autoStartLoop: file aready open?", force=True)
+        else:  # stop after a 10 minute continuous stop time out?
+            if self.last_stop is None:
+                self.last_stop = datetime.now().astimezone()
+            tdiff = self.last_stop - datetime.now().astimezone()
+            if tdiff.total_seconds() > AUTOSTOP_THRESHOLD:
+                self.debug(f"FDR::autoStartLoop: stoppe for {round(tdiff.total_seconds(), 0)} seconds, stopping FDR..")
+                if self.file is not None:
+                    self.stop()
+                    self.file.close()
+                    self.file = None
+                    self.debug("FDR::autoStartLoop: ..FDR stopped", force=True)
+                    xp.checkMenuItem(xp.findPluginsMenu(), self.menuIdx, 1)
+                else:
+                    self.debug("FDR::autoStartLoop: file aready closed?", force=True)
+        return AUTOSTART_FREQUENCY
+
+    def autoStart(self):
+        if self.autoStartLoop is None:
+            self.autoStartLoop = xp.createFlightLoop(callback=self.autoStartLoop, phase=xp.FlightLoop_Phase_AfterFlightModel, refCon=self.refAutoStartLoop)
+            xp.scheduleFlightLoop(self.autoStartLoop, AUTOSTART_FREQUENCY, 1)
+            self.debug("FDR::autoStart: started")
+
+    def stopAutoStart(self):
+        if self.autoStartLoop is not None:
+            xp.destroyFlightLoop(self.autoStartLoop)
+            self.autoStartLoop = None
+        self.debug("FDR::stopAutoStart: stopped")
+
 
 

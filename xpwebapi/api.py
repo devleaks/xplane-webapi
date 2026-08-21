@@ -546,7 +546,7 @@ class Dataref:
         """Return current value of dataref in local application"""
         return self._new_value if self._new_value is not None else self.api.dataref_value(self)
 
-    def get_string_value(self, encoding: str) -> str | None:
+    def get_string_value(self, encoding: str, nullval: str = "") -> str | None:
         """Decodes current dataref value and replaces it with the decoded string value
 
         Args:
@@ -570,8 +570,8 @@ class Dataref:
             logger.warning(f"string value encodings differ {self._encoding} vs {encoding}")
         try:
             value = value_bytes.decode(encoding)
-            value = value.replace("\u0000", "")  # remove trailing 0 (bytes with value 0)
-            value = value.replace("\x00", "")  # remove trailing 0 (bytes with value 0)
+            value = value.replace("\u0000", nullval)  # remove trailing 0 (bytes with value 0)
+            value = value.replace("\x00", nullval)  # remove trailing 0 (bytes with value 0)
             self._encoding = encoding
             return value
         except:

@@ -198,11 +198,14 @@ class FDRReader:
         }, geoj, indent=4)
 
 
-a = FDRReader()
-if a.parse():
-  # print("Fields:", a.header)
-  pprint(a.meta, width=120)
-  a.to_geojson(outfile="test2.geojson", altitude=True)
-  print(f"{a.length} points written, duration={a.duration}")
-else:
-  print("failed to parse")
+# ######################################################
+#
+if __name__ == "__main__":
+  a = FDRReader()
+  if a.parse():
+    # print("Fields:", a.header)
+    pprint(a.meta, width=120)
+    a.to_geojson(outfile="out.geojson", altitude=True)
+    print(f"{a.length} points written, duration={a.duration}")
+  else:
+    print("failed to parse")
