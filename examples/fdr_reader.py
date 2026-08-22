@@ -150,9 +150,9 @@ class FDRReader:
     for dref, v in zip(self.header[1:], data):
       if self.has_fdrdata:
         meta = self.fdr_data[dref]
-        if meta.dtype =="int":
-          props[dref] = int(v)
-        elif meta.dtype =="float":
+        if meta.dtype == "int":
+          props[dref] = int(float(v))
+        elif meta.dtype == "float":
           props[dref] = float(v)
         else:
           props[dref] = v
