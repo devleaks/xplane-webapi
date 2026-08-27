@@ -46,18 +46,17 @@ import re
 import math
 import tomllib
 from datetime import date, datetime, timedelta, timezone
-from traceback import print_stack
+from traceback import print_exc
 from typing import Tuple, Callable, Any, Set
 from dataclasses import dataclass
 from enum import IntEnum
 
-try:
-    import xp
-    from XPPython3.utils import xp_pip
-    from XPPython3.utils.datarefs import find_dataref
-except ImportError:
-    print("X-Plane not loaded")
+import xp
+from XPPython3.utils import xp_pip
+from XPPython3.utils.datarefs import find_dataref
 
+# Will try to remove Yaml and favor TOML later
+#
 yaml = False
 missing_modules = []
 try:
@@ -73,15 +72,59 @@ except ModuleNotFoundError:
 
 # Changelog
 
-# Helper Data Class container
+# Constants, default values
+#
+PLUGIN_ROOT_PATH = os.path.dirname(os.path.abspath(__file__))  # .../PythonPlugins
+SCRIPT_NAME = os.path.basename(__file__)
+
+SHOW_TRACE = False
+NAME = "FDR"
+DESCRIPTION = "Flight Data Recordder"
+VERSION = "4.2.1"
+
+FDR_MENU = "Start or stop FDR"
+FDR_RESET_COMMAND = "xppython3/fdr/start_stop_toggle"
+FDR_RESET_COMMAND_DESC = "Start or stop a new FDR session"
+FDR_PLUGIN_SIGNATURE = "com.xppython3.fdr"
+
+FDR_PREFERENCE_FILE = "fdr.yaml"  # .prf?
+FDR_VERSION = 4  # 3 or 4
+FDR_ARCH = "APPLE"  # "APPLE" or "IBM"
+
+WRITE_FREQUENCY = 10.0  # seconds
+REPORT_FREQUENCY = 100 # number of writes
+
+AUTOSTART = True
+AUTOSTART_FREQUENCY = 10.0  # secs
+AUTOSTART_THRESHOLD = 2.0  # m/s
+AUTOSTOP_THRESHOLD = 600.0  # seconds
+TAKEOFF_ELEV = 10.0 # m
+LANDING_ELEV = 50.0  # m
+REG_LEN = 10
+
+class FLIGHT(IntEnum):
+    UNKNOWN = 0
+    ON_BLOCK = 1  # assuming parked at gate, jetway, parking, etc.
+    STOPPED = 2  # and not on blocks, ex. stoppped on taxiway, holding position...
+    MOVING_ON_GROUND = 3
+    IN_AIR = 4
+
+class OOOI(IntEnum):
+    OUT = 0
+    OFF = 1
+    ON = 2
+    IN = 3
+
+# Helper data class container
 #
 HIDDEN_CB_SRC = "_callback_src"
 CB_LEN = 64
-
 @dataclass
 class FDRData:
     name: str  # tail number
     dataref: str  # sim/aircraft/view/acf_tailnum
+    range_min: int = -1
+    range_max: int = -1
     callback: Callable | None = None
     unit: str | None = None
     factor: float = 1.0
@@ -90,6 +133,11 @@ class FDRData:
     def init(self) -> bool:
         try:
             self.dref = find_dataref(self.dataref)
+            has_range = re.match(r"\[(\d)+-(\d)+\]", self.dataref)
+            if has_range:
+                self.range_min = has_range[0]
+                self.range_max = has_range[1]
+                print(f"{NAME} {VERSION}::FDRData.init: array range currently not allowed")
             return self.dref is not None
         except Exception as e:
             print(f"{NAME} {VERSION}::FDRData.init: {self.dataref} init failed: {e}")
@@ -119,29 +167,11 @@ class FDRData:
         return None
 
     @property
-    def data_type(self) -> str | Set | None:
-        # @todo
+    def is_array(self) -> bool:
         if self.dref is None:
-            print(f"{NAME} {VERSION}::FDRData.data_type: {self.dataref} no dref")
-            return None
-        v = set()
-        if self.dref.types & xp.Type_FloatArray:
-            v.add("array_float")
-        if self.dref.types & xp.Type_IntArray:
-            v.add("array_int")
-        if self.dref.types & xp.Type_Double:
-            v.add("float")
-        if self.dref.types & xp.Type_Float:
-            v.add("float")
-        if self.dref.types & xp.Type_Int:
-            v.add("int")
-        if self.dref.types & xp.Type_Data:
-            v.add("data")
-        if self.dref.types & xp.Type_Unknown:
-            v.add("unknown")
-        if len(v) > 1:
-            print(f"{NAME} {VERSION}::FDRData.data_type: {self.dataref} has more than one type {v}")
-        return v[0] if len(v) == 1 else v
+            print(f"{NAME} {VERSION}::FDRData.is_array: {self.dataref} no dref")
+            return False
+        return "float_array" in self.dref.types or "int_array" in self.dref.types or "data" in self.dref.types
 
     @property
     def value(self) -> int | float | str | None:
@@ -155,7 +185,10 @@ class FDRData:
         v = None
         try:
             v = self.dref.value
-            if self.callback is not None:
+            if self.is_array and "[0]" in self.dataref:  # bug XPPython3, returns while array for a[0] instead of scalar value
+                print(f"{NAME} {VERSION}::FDRData.value: workaround for index 0 of array ({self.dataref}={v[0]} (xppython3={xp.VERSION})")
+                v = v[0]
+            if v is not None and self.callback is not None:
                 v = self.callback(v)
         except Exception as e:
             print(f"{NAME} {VERSION}::FDRData.value: callback {self.name} {self.dataref} exception: {e}")
@@ -174,6 +207,7 @@ HEADER = [
     FDRData(name="WSPD", dataref="sim/weather/aircraft/wind_now_speed_msc", callback=lambda x: x * 1.94384449),  # 1 m/s = 1,94384449 kt, FDR expects kt
     FDRData(name="WDIR", dataref="sim/weather/aircraft/wind_now_direction_degt"),
     FDRData(name="DISA", dataref="sim/weather/region/temperatures_aloft_deg_c[0]"),  # not sure where to fetch temperature offset from ISA
+    FDRData(name="REPL", dataref="sim/operation/prefs/replay_mode"),  # no FDR onreplays (sim/time/is_in_replay)
     FDRData(name="ZDAY", dataref="sim/time/zulu_date_days"),  # used to get simulator time
     FDRData(name="ZSEC", dataref="sim/time/zulu_time_sec"),  # used to get simulator date (assume current year)
     FDRData(name="MOVE", dataref="sim/flightmodel2/position/groundspeed"),
@@ -193,49 +227,6 @@ FDR_DATA = [
     FDRData(name="roll", dataref="sim/cockpit2/gauges/indicators/roll_electric_deg_pilot"),
 ]
 # Through preferences, user can define a set of fdr_optional datarefs.
-
-# Constants
-#
-PLUGIN_ROOT_PATH = os.path.dirname(os.path.abspath(__file__))  # .../PythonPlugins
-SCRIPT_NAME = os.path.basename(__file__)
-
-SHOW_TRACE = False
-NAME = "FDR"
-DESCRIPTION = "Flight Data Recordder"
-VERSION = "4.1.8"
-
-FDR_MENU = "Start or stop FDR"
-FDR_RESET_COMMAND = "xppython3/fdr/start_stop_toggle"
-FDR_RESET_COMMAND_DESC = "Start or stop a new FDR session"
-FDR_PLUGIN_SIGNATURE = "com.xppython3.fdr"
-
-FDR_PREFERENCE_FILE = "fdr.yaml"
-FDR_VERSION = 4  # 3 or 4
-FDR_ARCH = "APPLE"  # "APPLE" or "IBM"
-
-WRITE_FREQUENCY = 10.0  # seconds
-REPORT_FREQUENCY = 100 # number of writes
-
-AUTOSTART = True
-AUTOSTART_FREQUENCY = 10.0  # secs
-AUTOSTART_THRESHOLD = 2.0  # m/s
-AUTOSTOP_THRESHOLD = 600.0  # seconds
-TAKEOFF_ELEV = 10.0 # m
-LANDING_ELEV = 50.0  # m
-REG_LEN = 10
-
-class FLIGHT(IntEnum):
-    UNKNOWN = 0
-    ON_BLOCK = 1
-    STOPPED = 2
-    MOVING_ON_GROUND = 3
-    IN_AIR = 4
-
-class OOOI(IntEnum):
-    OUT = 0
-    OFF = 1
-    ON = 2
-    IN = 3
 
 
 class PythonInterface:
@@ -301,8 +292,15 @@ class PythonInterface:
 
     @property
     def chocked(self) -> bool:
-        v = self.header.get("CHOK").value if self.custom_chocks is None else self.custom_chocks.value
-        return all([t != 0 for t in v]) if type(v) in [list, tuple] else v != 0
+        c = self.header.get("CHOK") if self.custom_chocks is None else self.custom_chocks
+        v = None
+        try:
+            v = c.value
+        except Exception as e:
+            self.debug(f"chocked: exception: {e}", force=True)
+        if v is None:
+            return False
+        return v != 0 if not (isinstance(v, list) or isinstance(v, tuple)) else any([t != 0 for t in v])
 
     def how_long_stopped(self) -> float:
         # returns total seconds since first stop noticed
@@ -310,54 +308,63 @@ class PythonInterface:
             return 0.0
         if self.last_stop is None:
             self.last_stop = self.system_now_datetime
-        return round((self.last_stop - self.system_now_datetime).total_seconds(), 0)
+            self.debug("flight_status: stopped (2)")
+        return round((self.system_now_datetime - self.last_stop).total_seconds(), 0)
 
     @property
     def flight_status(self) -> FLIGHT:
+        # Are we moving? Are we in the air?
         # Are we moving?
-        move = self.header.get("MOVE").value
-        if move is None:  # we don't know...
-            self.debug("flight_status: no movement info")
-            return FLIGHT.UNKNOWN
-        if move < AUTOSTART_THRESHOLD:
-            if self.chocked:
-                return FLIGHT.ON_BLOCK
-            else:
-                if self.last_stop is None:
-                    self.last_stop = self.system_now_datetime
-                    self.debug("flight_status: stopped")
-                return FLIGHT.STOPPED
-        # Yes we are moving...
-        if self.last_stop is not None:
-            self.debug("flight_status: started moving")
-            self.last_stop = None
-        # Are we in the air?
-        elev = self.header.get("ABGL").value
-        if elev is None or elev < TAKEOFF_ELEV:
-            return FLIGHT.MOVING_ON_GROUND
-        # Yes we are in the air...
-        if not self.had_air_time:
-            self.had_air_time = True
-            self.debug("flight_status: air time")
+        try:
+            move = self.header.get("MOVE").value
+            if move is None:  # we don't know...
+                self.debug("flight_status: no movement info")
+                return FLIGHT.UNKNOWN
+            if move < AUTOSTART_THRESHOLD:
+                if self.chocked:
+                    self.debug("flight_status: on chocks")
+                    return FLIGHT.ON_BLOCK
+                else:
+                    if self.last_stop is None:
+                        self.last_stop = self.system_now_datetime
+                        self.debug("flight_status: stopped")
+                    return FLIGHT.STOPPED
+            # Yes we are moving...
+            if self.last_stop is not None:
+                self.debug("flight_status: started moving")
+                self.last_stop = None
+            # Are we in the air?
+            elev = self.header.get("ABGL").value
+            if elev is None or elev < TAKEOFF_ELEV:
+                return FLIGHT.MOVING_ON_GROUND
+            # Yes we are in the air...
+            if not self.had_air_time:
+                self.had_air_time = True
+                self.debug("flight_status: air time")
 
-        # Additional: Are we taking of or landing?
-        # @todo: possible dynamic adjustment of FDR frequency:
-        #        less in cruise, more close to the ground
-        self.add_elev(self.system_now_datetime, elev)
-        r, e = self.vertical_lr()
-        t = self.elevs[-1][0] - self.elevs[0][0]
-        self.debug(f"flight_status: vertical regression: {round(r, 2)} m/s ({round(r*196.85039, 0)} ft/m) (delta t={round(t, 2)} secs, {REG_LEN} pts), err={round(e, 2)}")
-        if elev < LANDING_ELEV and r < 0.0:
-            self.debug("flight_status: landing")
-            # self.frequency = 1.0
-        elif self.estimated_state == FLIGHT.MOVING_ON_GROUND and elev > TAKEOFF_ELEV and r > 0.0:
-            self.debug("flight_status: takeoff")
-            # self.frequency = 5.0
-        self.last_agl = elev
-        return FLIGHT.IN_AIR
+            # Additional: Are we taking of or landing?
+            # @todo: possible dynamic adjustment of FDR frequency:
+            #        less in cruise, more close to the ground
+            self.add_elev(self.system_now_datetime, elev)
+            r, e = self.vertical_lr()
+            t = self.elevs[-1][0] - self.elevs[0][0]
+            # self.debug(f"flight_status: vertical regression: {round(r, 2)} m/s ({round(r*196.85039, 0)} ft/m) (delta t={round(t, 2)} secs, {REG_LEN} pts), err={round(e, 2)}")
+            if elev < LANDING_ELEV and r < 0.0:
+                self.debug("flight_status: landing")
+                # self.frequency = 1.0
+            elif self.estimated_state == FLIGHT.MOVING_ON_GROUND and elev > TAKEOFF_ELEV and r > 0.0:
+                self.debug("flight_status: takeoff")
+                # self.frequency = 5.0
+            self.last_agl = elev
+            return FLIGHT.IN_AIR
+        except Exception as e:
+            self.debug(f"flight_status: exception {e}")
+            print_exc()
+            return FLIGHT.UNKNOWN
 
     @estimated_state.setter
     def estimated_state(self, new_state: FLIGHT):
+        # OOOI logic
         def was(e: FLIGHT):
             return self.estimated_state == e
 
@@ -365,6 +372,7 @@ class PythonInterface:
             return
 
         zulu = self.simulator_zulu_datetime.replace(microsecond=0) # .isoformat().replace('+00:00', 'Z')
+        oooi_msg = None
 
         if was(FLIGHT.UNKNOWN) or new_state == FLIGHT.UNKNOWN:
                 self.debug(f"estimated_state: {self._estimated_state.name} => {new_state.name} (at {zulu})")
@@ -377,7 +385,7 @@ class PythonInterface:
             elif was(FLIGHT.STOPPED) or was(FLIGHT.MOVING_ON_GROUND):
                 if self.had_air_time:
                     self.oooi[OOOI.IN] = zulu
-                    self.debug(f"000I: IN at {zulu}", force=True)
+                    oooi_msg = OOOI.IN
                 else:
                     self.debug("estimated_state: back on block")
             else:
@@ -391,7 +399,7 @@ class PythonInterface:
                 if self.had_air_time:
                     self.debug("estimated_state: had air time, stopped, may be parked? tentative IN")
                     self.oooi[OOOI.IN] = zulu
-                    self.debug(f"000I: IN at {zulu} (unsure)", force=True)
+                    oooi_msg = OOOI.IN
                     self.oooi_notes[OOOI.IN] = "not on blocks, may be stopped on taxiway or apron?"
                 else:
                     self.debug("estimated_state: stopped")
@@ -399,23 +407,27 @@ class PythonInterface:
         elif new_state == FLIGHT.MOVING_ON_GROUND:
             if was(FLIGHT.IN_AIR):  # landed
                 self.oooi[OOOI.ON] = zulu
-                self.debug(f"000I: ON at {zulu}", force=True)
+                oooi_msg = OOOI.ON
             elif was(FLIGHT.ON_BLOCK) or was(FLIGHT.STOPPED) and not self.had_air_time:
                 if was(FLIGHT.ON_BLOCK):
                     self.chocks_removed = zulu
                 if self.oooi[OOOI.OUT] is None:
                     self.oooi[OOOI.OUT] = zulu
-                    self.debug(f"000I: OUT at {zulu}", force=True)
+                    oooi_msg = OOOI.OUT
 
         elif new_state == FLIGHT.IN_AIR:
             self.had_air_time = True
             if was(FLIGHT.MOVING_ON_GROUND):  # take-off
                 self.oooi[OOOI.OFF] = zulu
-                self.debug(f"000I: OFF at {zulu})", force=True)
+                oooi_msg = OOOI.OFF
             else:
                 self.debug("estimated_state: got in air without on ground movement?")
 
         self.debug(f"estimated_state: {self._estimated_state.name} => {new_state.name} (at {zulu})")
+        if oooi_msg is not None:
+            m = self.oooi_notes[oooi_msg]
+            m = "" if m is None else f"({m})"
+            self.debug(f"OOOI: {oooi_msg.name} at {zulu} {m}", force=True)
         self._estimated_state = new_state
 
     def add_elev(self, dt: datetime, alt: float):
@@ -424,10 +436,10 @@ class PythonInterface:
         if len(self.elevs) > REG_LEN:
             self.elevs = self.elevs[-10:]
 
-    def vertical_lr(self) -> float:
+    def vertical_lr(self) -> tuple:
         # linear regression on last altitude checkpoints
         if len(self.elevs) < 3:
-            return 0.0
+            return 0.0, 0.0
         x = [a[0] for a in self.elevs]
         mx = sum(x)/len(x)
         y = [a[1] for a in self.elevs]
@@ -440,10 +452,18 @@ class PythonInterface:
         return nxy / math.sqrt(nx2*ny2) if nx2 != 0.0 and ny2 != 0.0 else 0.0, r
 
     @property
+    def replay_mode(self) -> bool:
+        v = self.header.get("REPL").value
+        return v is not None and v != 0
+
+    @property
     def simulator_zulu_datetime(self) -> datetime:
         now = datetime.now(tz=timezone.utc)
         days = self.header.get("ZDAY").value
         secs = self.header.get("ZSEC").value
+        if days is None or secs is None:  # fallback, as if X-Plane was using "system time"
+            self.debug("simulator_zulu_datetime: could not get simulator time, returning system time", force=True)
+            return self.system_now_datetime.replace(tzinfo=timezone.utc)
         return datetime(year=now.year,
                         month=1,
                         day=1,
@@ -455,6 +475,7 @@ class PythonInterface:
 
     @property
     def system_now_datetime(self) -> datetime:
+        # lsystem time in local timezone
         return datetime.now().astimezone().replace(microsecond=0)
 
     def debug(self, message, force: bool = False):
@@ -480,6 +501,11 @@ class PythonInterface:
 
         for d in self.fdr_data:
             d.init()
+
+        # Install output dir
+        outdir = os.path.join(xp.getSystemPath(), "Output", "fdr")
+        if not os.path.isdir(outdir):
+            os.makedirs(outdir)
 
         # Install plugin in X-Plane
         self.fdrCmdRef = xp.createCommand(FDR_RESET_COMMAND, FDR_RESET_COMMAND_DESC)
@@ -520,23 +546,24 @@ class PythonInterface:
             self.debug("XPluginStop: menu not removed")
 
         self.debug("XPluginStop: ..stopped")
-        pass
 
     def XPluginEnable(self) -> int:
         self.debug("XPluginEnable: enabling..")
         self.load_preferences()
         if AUTOSTART:
             self.start_supervisor()
-        self.debug("XPluginEnable: ..enabled")
         self._enabled = True
+        self.debug("XPluginEnable: ..enabled")
         return 1
 
     def XPluginDisable(self):
-        self.stop_recording()
-        self.close_fdr_file()
-        if AUTOSTART:
-            self.stop_supervisor()
-        self.debug("XPluginDisable: disabled")
+        self.debug("XPluginEnable: disabling..")
+        if self._enabled:
+            self.stop_recording()
+            self.close_fdr_file()
+            if AUTOSTART:
+                self.stop_supervisor()
+        self.debug("XPluginDisable: ..disabled")
         self._enabled = False
 
     def XPluginReceiveMessage(self, inFromWho, inMessage, inParam):
@@ -572,7 +599,24 @@ class PythonInterface:
     #
     # PREFERENCES
     #
+    @property
+    def need_delayed_init(self) -> bool:
+        return self.custom_chocks is None and self.prefs.get("chocks") is not None
+
+    def delayed_init(self):
+        if self.custom_chocks is None:
+            custom_chocks = self.prefs.get("chocks")
+            if custom_chocks is not None:
+                if self.custom_chocks is None or custom_chocks != self.custom_chocks.dataref:
+                    cs_fdrdata = FDRData("CHOK", dataref=custom_chocks)
+                    if cs_fdrdata.init():
+                        self.custom_chocks = cs_fdrdata
+                        self.debug(f"delayed_init: using custom chocks dataref {custom_chocks}", force=True)
+                    else:
+                        self.debug(f"delayed_init: failed to init custom chocks dataref {custom_chocks}, using default chocks dataref", force=True)
+
     def install_preferences(self, newprefs: dict) -> bool:
+        self.trace = newprefs.get("trace", self.trace)
         desc = newprefs.get("description")
         if desc is not None:
             self.debug(f"install_preferences: installing {desc}..", force=True)
@@ -587,9 +631,12 @@ class PythonInterface:
         custom_chocks = newprefs.get("chocks")
         if custom_chocks is not None:
             if self.custom_chocks is None or custom_chocks != self.custom_chocks.dataref:
-                self.custom_chocks = FDRData("CHOK", dataref=custom_chocks)
-                self.custom_chocks.init()
-                self.debug(f"install_preferences: using custom chocks dataref {custom_chocks}", force=True)
+                cs_fdrdata = FDRData("CHOK", dataref=custom_chocks)
+                if cs_fdrdata.init():
+                    self.custom_chocks = cs_fdrdata
+                    self.debug(f"install_preferences: using custom chocks dataref {custom_chocks}", force=True)
+                else:
+                    self.debug(f"install_preferences: failed to init custom chocks dataref {custom_chocks}, using default chocks dataref", force=True)
         else:
             self.debug("install_preferences: using default chocks dataref")
             self.custom_chocks = None
@@ -714,20 +761,25 @@ class PythonInterface:
 
     def supervisor(self, elapsedSinceLastCall, elapsedTimeSinceLastFlightLoop, counter, inRefcon):
         try:
+            if self.need_delayed_init:
+                self.delayed_init()
             self.estimated_state = self.flight_status
+            if self.replay_mode and self.recorder_running:
+                self.debug("supervisor: replay mode detected, stoping FDR..", force=True)
+                self.stop_recording()
+                self.close_fdr_file()
+                self.debug("supervisor: ..FDR stopped", force=True)
             if self.estimated_state in [FLIGHT.MOVING_ON_GROUND, FLIGHT.IN_AIR] and not self.recorder_running:  # toggle ON
-                self.debug("supervisor: move detected, starting FDR..", force=True)
-                outfile = os.path.join(xp.getSystemPath(), "Output", "fdr")
-                if not os.path.isdir(outfile):
-                    os.makedirs(outfile)
-                outfile = self.open_fdr_file()
-                self.start_recording()
-                self.debug(f"supervisor: ..started, saving FDR{self.version} into {outfile}", force=True)
-                # else:
-                #     self.debug("supervisor: file aready open?", force=True)
+                if self.replay_mode:
+                    self.debug("supervisor: replay mode detected, no start", force=True)
+                else:
+                    self.debug("supervisor: move detected, starting FDR..", force=True)
+                    outfile = self.open_fdr_file()
+                    self.start_recording()
+                    self.debug(f"supervisor: ..started, saving FDR{self.version} into {outfile}", force=True)
             else:  # stop after a 10 minute continuous stopped time out?
                 tdiff = self.how_long_stopped()
-                if tdiff > AUTOSTOP_THRESHOLD:
+                if tdiff > AUTOSTOP_THRESHOLD and self.recorder_running:
                     self.debug(f"supervisor: stopped for {tdiff} seconds, stopping FDR..", force=True)
                     if self.file is not None:
                         self.stop_recording()
@@ -749,7 +801,7 @@ class PythonInterface:
         if self.supervisorFL is not None:
             xp.destroyFlightLoop(self.supervisorFL)
             self.supervisorFL = None
-        self.debug("stop_supervisor: stopped", force=True)
+            self.debug("stop_supervisor: stopped", force=True)
 
     #
     # FDR (runs as needed)
@@ -767,6 +819,8 @@ class PythonInterface:
             self.end_situation()
             self.file.close()
             self.file = None
+            self.debug("close_fdr_file: file closed", force=True)
+
 
     def start_situation(self):
         if self.file is None:
@@ -814,7 +868,7 @@ class PythonInterface:
         print(f"TAIL, {self.header.get('TAIL').value}", file=self.file)
         print(f"DATE, {self.simulator_zulu_datetime.strftime("%m/%d/%Y")}", file=self.file)  # MM/DD/YYYY
         print(f"PRES, {round(self.header.get('SEAL').value, 2)}", file=self.file)
-        print(f"DISA, {round(self.header.get('DISA').value[0], 2)}", file=self.file)
+        print(f"DISA, {round(self.header.get('DISA').value, 2)}", file=self.file)
         print(f"WIND, {int(self.header.get('WDIR').value)}," +
                    f" {round(self.header.get('WSPD').value, 2)}", file=self.file)
 
@@ -864,7 +918,7 @@ class PythonInterface:
                 self.writes = self.writes + 1
                 self.file.flush()
                 if self.report_frequency > 0 and self.writes % self.report_frequency == 0:
-                    self.debug(f"loop: {self.writes} events since {self.start_time.replace(microsecond=0).isoformat()}", force=True)
+                    self.debug(f"loop: at {self.simulator_zulu_datetime.strftime('%H:%M:%S')} {self.writes} events since {self.start_time.strftime('%H:%M:%S')}", force=True)
             else:
                 self.debug("loop: no fdr file", force=True)
         except Exception as e:
@@ -896,5 +950,5 @@ class PythonInterface:
             if self.file is not None:
                 print(f"\n\nCOMM, end recording on {self.system_now_datetime.isoformat()} ({self.writes} writes)", file=self.file)
                 print(f"COMM, created by {SCRIPT_NAME} rel. {VERSION} on {self.system_now_datetime.isoformat()}\n", file=self.file)
-        self.debug(f"stop_recording: stopped at {self.start_time.isoformat()}")
+            self.debug(f"stop_recording: stopped at {self.start_time.isoformat()}")
 
