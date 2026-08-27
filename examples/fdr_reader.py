@@ -165,6 +165,7 @@ class FDRReader:
     # TS is datetime.now(datetime.UTC).strftime("%H:%M:%S.%f, ")
     features = []
     lines = []
+    idx = 0
     for row in self.data:
       p = [float(row[1]), float(row[2])]
       if altitude:
@@ -177,9 +178,10 @@ class FDRReader:
         "geometry": {
           "type": "Point",
           "coordinates": p,
-          "properties": {self.header[0]: ts.isoformat()} | self.properties(row[1:])
+          "properties": {"id": idx, self.header[0]: ts.isoformat()} | self.properties(row[1:])
         }
       })
+      idx += 1
 
     # add whole line string
     features.append({
