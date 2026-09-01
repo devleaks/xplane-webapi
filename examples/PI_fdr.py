@@ -51,9 +51,12 @@ from typing import Tuple, Callable, Any, Set
 from dataclasses import dataclass
 from enum import IntEnum
 
-import xp
-from XPPython3.utils import xp_pip
-from XPPython3.utils.datarefs import find_dataref
+try:
+    import xp
+    from XPPython3.utils import xp_pip
+    from XPPython3.utils.datarefs import find_dataref
+except ModuleNotFoundError:
+    print("not using X-Plane")
 
 # Will try to remove Yaml and favor TOML later
 #
@@ -149,7 +152,7 @@ class FDRData:
         if self.callback is None:
             return s
         if hasattr(self, HIDDEN_CB_SRC): # callback installed through eval()
-            sc = f"callback: {getattr(self, HIDDEN_CB_SRC)}"
+            sc = f"callback={getattr(self, HIDDEN_CB_SRC)}"
             s1 = re.sub(r"callback=\<function \<lambda\> at 0[xX][0-9a-fA-F]+\>", sc, s)
             # print(f"FDRData::fun: re.sub: {s} => {s1}")
             return s1

@@ -1,8 +1,10 @@
+import sys
 import json
 from datetime import datetime, timedelta, timezone
 from pprint import pprint
+from traceback import print_exc
 
-from fdr import FDRData  # used in eval(), FDRData is a @dataclass
+from PI_fdr import FDRData  # used in eval(), FDRData is a @dataclass
 
 HEADER_KEYWORDS = [
   "ACFT",
@@ -86,6 +88,7 @@ class FDRReader:
     print(f"FDR data format version {self.fdr_version}")
 
     i = 2
+    data_index = 1
     while i < len(self.lines):
       if len(self.lines[i]) == 0:
         i += 1
@@ -106,10 +109,13 @@ class FDRReader:
             try:
               print(text)
               fdrdata = eval(text)
+              fdrdata.data_index = data_index
+              data_index += 1
               self.fdr_data[fdrdata.name] = fdrdata
               # print(t)
             except:
               print("failed to eval(), skipped", text)
+              print_exc()
             i += 1
             continue
         self.meta[k].append((self._last_ts, text))
@@ -160,36 +166,66 @@ class FDRReader:
         props[dref] = v
     return props # {self.header[i]: float(data[i].strip()) for i in range(1, len(data))}
 
-  def to_geojson(self, outfile: str, altitude: bool = False):
+  def to_geojson(self, outfile: str, altitude: bool = False, all_properties: bool = False):
     # Assumes all data are float except first one that is a timestamp
     # TS is datetime.now(datetime.UTC).strftime("%H:%M:%S.%f, ")
     features = []
     lines = []
-    idx = 0
+    feature_index = 0
     for row in self.data:
+      # coordinates
       p = [float(row[1]), float(row[2])]
-      if altitude:
-        p.append(float(row[3]) / 3.28084)
+      # altitude
+      alt = None
+      ele = self.fdr_data.get("ellipsoid_height")  # as requested by GeoJSON
+      if ele is None:
+          ele = self.fdr_data.get("elevation")  # MSL backup without ellipsoid
+      if ele is None:
+          ele = self.fdr_data.get("altitude")  # desperate
+      if ele is not None:
+        alt = float(row[ele.data_index]) / 3.28084
+      if altitude and alt is not None:
+        p.append(alt)
       lines.append(p)
+      # time
       ts = datetime.strptime(row[0].strip(), "%H:%M:%S.%f")
       ts = ts.replace(tzinfo=timezone.utc, day=self.basedate.day, month=self.basedate.month, year=self.basedate.year)
+      # properties
+      props = {"id": feature_index, self.header[0]: ts.isoformat(), "_raw_ts": ts.timestamp()}
+      if all_properties:
+        props = props | self.properties(row[1:])
+      else:
+        spd = self.fdr_data.get("ground_speed")  # derivative, for information only
+        if spd is not None:
+          props = props | {"speed": float(row[spd.data_index]) }
+        hdg = self.fdr_data.get("heading")  # derivative, for information only
+        if hdg is not None:
+          props = props | {"heading": float(row[hdg.data_index]) }
+        if alt is not None:
+          props = props | {"altidude":  alt}
+      # feature
       features.append({
         "type": "Feature",
+        "id": feature_index,
         "geometry": {
           "type": "Point",
-          "coordinates": p,
-          "properties": {"id": idx, self.header[0]: ts.isoformat()} | self.properties(row[1:])
-        }
+          "coordinates": p
+        },
+        "properties": props
       })
-      idx += 1
+      feature_index += 1
 
     # add whole line string
+    feature_index += 1
     features.append({
       "type": "Feature",
-      "properties": {},
+      "id": feature_index,
       "geometry": {
         "type": "LineString",
         "coordinates": lines
+      },
+      "properties": {
+        "name": "whole flight"
       }
      })
 
@@ -203,11 +239,22 @@ class FDRReader:
 # ######################################################
 #
 if __name__ == "__main__":
-  a = FDRReader()
-  if a.parse():
-    # print("Fields:", a.header)
-    pprint(a.meta, width=120)
-    a.to_geojson(outfile="out.geojson", altitude=True)
-    print(f"{a.length} points written, duration={a.duration}")
+  if len(sys.argv) > 1:
+    for file in sys.argv[1:]:
+      a = FDRReader(filename=file)
+      if a.parse():
+        # print("Fields:", a.header)
+        pprint(a.meta, width=120)
+        a.to_geojson(outfile=f"{file}.geojson", altitude=True)
+        print(f"{file}: {a.length} points written, duration={a.duration}")
+      else:
+        print(f"{file}: failed to parse")
   else:
-    print("failed to parse")
+      a = FDRReader()
+      if a.parse():
+        # print("Fields:", a.header)
+        pprint(a.meta, width=120)
+        a.to_geojson(outfile="out.geojson", altitude=True)
+        print(f"out.geojson: {a.length} points written, duration={a.duration}")
+      else:
+        print("failed to parse")
