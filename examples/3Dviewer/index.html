@@ -1,0 +1,398 @@
+<html>
+<head>
+<link rel="stylesheet" href="leaflet/leaflet.css" crossorigin="" />
+<script src="leaflet/leaflet.js" crossorigin=""></script>
+<script src="moment/moment.js" crossorigin=""></script>
+<script src="chartjs/chart.umd.js" crossorigin=""></script>
+<style>
+#map { height: 500px; }
+#charts { height: 200px; }
+</style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="menu">
+        <input type="file" name="geojsonfile" id="geojsonfile">
+    </div>
+    <div id="charts">
+        <canvas id="mainChart"></canvas>
+        <canvas id="otherChart"></canvas>
+    </div>        
+<script language="javascript">
+const TRANSPARENT_ICON = L.icon({
+    iconUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+P+/HgAFhAJ/wlseKgAAAABJRU5ErkJggg==",
+    iconSize: [4, 4], // size of the icon
+    iconAnchor: [2, 2], // point of the icon which will correspond to marker's location
+    popupAnchor: [-5, -5] // point from which the popup should open relative to the iconAnchor
+});
+
+const AIRCRAFT_ICON = L.icon({
+    iconUrl: "aircraft.png",
+    iconSize: [32, 32], // size of the icon
+    iconAnchor: [16, 16], // point of the icon which will correspond to marker's location
+    popupAnchor: [-34, -34] // point from which the popup should open relative to the iconAnchor
+});
+
+const SPEED = "ground_speed";
+const ALTITUDE = "altitude";
+const IGNORE = ["id", "UTC Time", "_raw_ts", "latitude", "longitude", SPEED, ALTITUDE]
+
+var geojson = {};
+var pointFeatures = {};
+var latlngs = [];
+var xlabels = [];
+var map = undefined;
+var mainChart = undefined;
+var otherChart = undefined;
+var mapCursor = undefined;
+var chartCandidates = Array();
+
+chartCandidates.remove = function(what) {
+    const index = this.indexOf(what);
+    if (index > -1) {
+        this.splice(index, 1);
+    }
+}
+
+function best_guess(s) {
+    if (typeof(s) == "number") {
+        return s;
+    }
+    if (typeof(s) == "string") {
+        try {
+            let a = parseInt(s);
+            return a;
+        } catch(e) {
+            ;
+        }
+        try {
+            let a = parseFloat(s);
+            return a;
+        } catch(e) {
+            ;
+        }
+        return s;
+    }
+    return s;
+}
+
+function loadMap(text) {
+    geojson = JSON.parse(text);
+    pointFeatures = geojson.features.filter((f) => f.geometry.type == "Point");
+    latlngs = pointFeatures.map((f) => [f.geometry.coordinates[1], f.geometry.coordinates[0]]);
+    let markers = pointFeatures.map( (f) => {
+        m = L.marker([f.geometry.coordinates[1], f.geometry.coordinates[0]], {
+            icon: TRANSPARENT_ICON
+        })
+        m.on("mouseover", function() {
+            moveMapCursor(f.id);
+            moveChartCursor(f.id);
+        })
+        return m;
+    });
+    // Start leaflet
+    let avglat = pointFeatures.reduce( (acc, f) => acc + f.geometry.coordinates[1], 0) / pointFeatures.length;
+    let avglon = pointFeatures.reduce( (acc, f) => acc + f.geometry.coordinates[0], 0) / pointFeatures.length;
+    map = L.map("map").setView([avglat, avglon], 13);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 18,
+        attribution: "&copy; <a href='http://www.openstreetmap.org/copyright'>OpenStreetMap</a>"
+    }).addTo(map);
+    // display whole flight as linestring
+    L.polygon(latlngs, {
+        color: "darkblue",
+        fill: false
+    }).addTo(map);
+    mapCursor = L.marker(latlngs[0], {
+        icon: AIRCRAFT_ICON
+    }).addTo(map);
+
+    // add points:
+    markers.forEach((m) => {
+        m.addTo(map);
+    })
+
+    //
+    const f = geojson.features[0];
+    chartCandidates =  Object.keys(f.properties)
+        .filter((p) => typeof(f.properties[p]) == "number" && IGNORE.indexOf(p) == -1);
+    console.log(chartCandidates, chartCandidates.length);
+
+    mainSpeedAltChart();
+    if (chartCandidates.length > 0) {
+        otherCharts();
+    }
+}
+
+document.getElementById("geojsonfile")
+    .addEventListener("change", function() {
+        let fr = new FileReader();
+        fr.onload = function() {
+            loadMap(fr.result);
+        }
+        fr.readAsText(this.files[0]);
+    })
+
+function mainSpeedAltChart() {
+    let spd = get_values(SPEED)
+    let alt = get_values(ALTITUDE)
+    xlabels = []
+    for (i = 0; i < geojson.features.length - 1; i++) {
+        date = new Date(geojson.features[i].properties._raw_ts * 1000);
+        fmt = new Intl.DateTimeFormat("en-GB", {
+            timeStyle: "long",
+        }).format(date);
+        fmt = fmt.substr(0, 8);
+        xlabels.push(fmt);
+    }
+
+    const data = {
+        labels: xlabels,
+        datasets: [{
+            backgroundColor: "rgba(253, 128, 8, 0.2)",
+            borderColor: "rgba(253, 128, 8, 1)", // orange
+            borderWidth: 2,
+            data: spd,
+            label: SPEED,
+            pointRadius: 0,
+            tension: 0,
+            yAxisID: "y",
+        }, {
+            backgroundColor: "rgba(15, 128, 255, 0.2)",
+            borderColor: "rgba(15, 128, 255, 1)", // blue
+            borderWidth: 2,
+            data: alt,
+            label: ALTITUDE,
+            pointRadius: 0,
+            tension: 0,
+            yAxisID: "y1",
+        }]
+    };
+    const config = {
+        type: "line",
+        plugins: [{ // https://stackoverflow.com/questions/68058199/chartjs-need-help-on-drawing-a-vertical-line-when-hovering-cursor
+            afterDraw: chart => {
+                if (chart.tooltip?._active?.length) {
+                    let x = chart.tooltip._active[0].element.x;
+                    let yAxis = chart.scales.y;
+                    let ctx = chart.ctx;
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.moveTo(x, yAxis.top);
+                    ctx.lineTo(x, yAxis.bottom);
+                    ctx.lineWidth = 1;
+                    ctx.strokeStyle = "rgba(0, 0, 255, 0.4)";
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            }
+        }],
+        data: data,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            onHover: (e) => {
+                const canvasPosition = Chart.helpers.getRelativePosition(e, mainChart);
+                const index = mainChart.scales.x.getValueForPixel(canvasPosition.x);
+                moveMapCursor(index);
+            },
+            plugins: {
+                legend: {
+                    position: "top",
+                },
+                // title: {
+                //   display: true,
+                //   text: "Chart.js Line Chart"
+                // }
+            },
+            scales: {
+                // x: {
+                //   type: "time",
+                //   time: {
+                //     // Luxon format string
+                //     tooltipFormat: "DD T"
+                //   },
+                // },
+                y: {
+                    type: "linear",
+                    display: true,
+                    position: "left",
+                    title: {
+                        display: true,
+                        text: "Speed (m/s)",
+                        //color: "#191",
+                        padding: {
+                            top: 30,
+                            left: 0,
+                            right: 0,
+                            bottom: 0
+                        }
+                    },
+                },
+                y1: {
+                    type: "linear",
+                    display: true,
+                    position: "right",
+                    title: {
+                        display: true,
+                        text: "Altitude (m MSL)",
+                        //color: "#191",
+                        padding: {
+                            top: 30,
+                            left: 0,
+                            right: 0,
+                            bottom: 0
+                        }
+                    },
+                    // grid line settings
+                    grid: {
+                        drawOnChartArea: false, // only want the grid lines for one axis to show up
+                    },
+                },
+            },
+            interaction: {
+                intersect: false,
+                mode: "index",
+            }
+        },
+    };
+    const ctx = document.getElementById("mainChart");
+    mainChart = new Chart(ctx, config);
+}
+
+function otherCharts() {
+    let datasets = []
+    chartCandidates.forEach((label) => {
+        let data = pointFeatures.map((f) => f.properties[label]);
+        datasets.push({
+            backgroundColor: "rgba(15, 128, 255, 0.2)",
+            borderColor: get_color(datasets.length), // blue
+            borderWidth: 2,
+            data: data,
+            label: label,
+            pointRadius: 0,
+            tension: 0,
+            yAxisID: "y1",
+        });
+    })
+    const data = {
+        labels: xlabels,
+        datasets: datasets
+    };
+    const config = {
+        type: "line",
+        plugins: [{ // https://stackoverflow.com/questions/68058199/chartjs-need-help-on-drawing-a-vertical-line-when-hovering-cursor
+            afterDraw: chart => {
+                if (chart.tooltip?._active?.length) {
+                    let x = chart.tooltip._active[0].element.x;
+                    let yAxis = chart.scales.y;
+                    let ctx = chart.ctx;
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.moveTo(x, yAxis.top);
+                    ctx.lineTo(x, yAxis.bottom);
+                    ctx.lineWidth = 1;
+                    ctx.strokeStyle = "rgba(0, 0, 255, 0.4)";
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            }
+        }],
+        data: data,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            onHover: (e) => {
+                const canvasPosition = Chart.helpers.getRelativePosition(e, mainChart);
+                const index = mainChart.scales.x.getValueForPixel(canvasPosition.x);
+                moveMapCursor(index);
+            },
+            scales: {
+                // x: {
+                //   type: "time",
+                //   time: {
+                //     // Luxon format string
+                //     tooltipFormat: "DD T"
+                //   },
+                // },
+                y: {
+                    type: "linear",
+                    display: false,
+                    position: "left",
+                },
+            },
+            plugins: {
+                legend: {
+                    position: "top",
+                },
+                title: {
+                    display: true,
+                    text: "Other Data"
+                }
+            },
+            interaction: {
+                intersect: false,
+                mode: "index",
+            }
+        },
+    };
+    const ctx = document.getElementById("otherChart");
+    otherChart = new Chart(ctx, config);
+}
+
+function convertDegreesToRadians(degrees) {
+    return degrees * (Math.PI / 180);
+}
+
+function convertRadiansToDegrees(radians) {
+    return radians * (180 / Math.PI);
+}
+
+function bearing(src, dst) {
+    lat1 = convertDegreesToRadians(src.geometry.coordinates[1])
+    lon1 = convertDegreesToRadians(src.geometry.coordinates[0])
+    lat2 = convertDegreesToRadians(dst.geometry.coordinates[1])
+    lon2 = convertDegreesToRadians(dst.geometry.coordinates[0])
+    y = Math.sin(lon2 - lon1) * Math.cos(lat2);
+    x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1);
+    t = Math.atan2(y, x);
+    return convertRadiansToDegrees(t);
+}
+
+function moveMapCursor(idx) {
+    rot = bearing(geojson.features[idx], geojson.features[idx+1]);
+    mapCursor.setLatLng(latlngs[idx]);
+    mapCursor._icon.style.transformOrigin = '16px 16px';
+    mapCursor._icon.style.transform += ' rotateZ(' + Math.round(rot) + 'deg)';
+    // console.log(mapCursor._icon.style.transform);
+}
+
+function moveChartCursor(idx) {
+    console.log(idx, xlabels[idx])
+    let x = mainChart.scales.x.getPixelForValue(xlabels[idx], idx);
+    let yAxis = mainChart.scales.y;
+    let ctx = mainChart.ctx;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(x, yAxis.top);
+    ctx.lineTo(x, yAxis.bottom);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(0, 0, 255, 0.4)";
+    ctx.stroke();
+    ctx.restore();
+}
+
+function get_values(label) {
+    return pointFeatures.map((f) => f.properties[label]);
+}
+
+COLORS = [
+    '#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe', '#008080', '#e6beff', '#9a6324', '#fffac8', '#800000', '#aaffc3', '#808000', '#ffd8b1', '#000075', '#808080', '#ffffff', '#000000'
+]
+
+function get_color(idx) {
+    return COLORS[idx % COLORS.length];
+}
+</script>
+</body>
+</html>
