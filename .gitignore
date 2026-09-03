@@ -162,3 +162,4 @@ cython_debug/
 examples/out.fdr
 *.fdr
 *.geojson
+/examples/3Dviewer/docs

@@ -40,8 +40,7 @@ const SPEED = "ground_speed";  // name of property for speed
 const ALTITUDE = "altitude";  // name of property for altitude
 // list of properties to ignore for charting
 const IGNORE = ["id", "UTC Time", "_raw_ts", "latitude", "longitude", SPEED, ALTITUDE];
-const MAX_DATA_PER_CHART = 2;  // number of curves per chart, 6 is reasonable max.
-const USE_TIME = true;
+const MAX_DATA_PER_CHART = 4;  // number of curves per chart, 6 is reasonable max.
 
 
 // Globals
@@ -49,7 +48,6 @@ var geojson = {};  // whole file
 var pointFeatures = {}; // individual points
 var latlngs = [];   // minimal data for cursor
 var tlabels = [];   // global (uniform) x-axis time ticks
-var xlabels = [];   // global (uniform) x-axis label
 var mainChart = undefined; // for cursor positioning
 var mapCursor = undefined; // map cursor
 var otherChartsRef = {}; // for cursor positioning
@@ -140,7 +138,6 @@ document.getElementById("geojsonfile")
     })
 
 function mainSpeedAltChart() {
-    xlabels = []
     for (i = 0; i < geojson.features.length - 1; i++) {
         date = new Date(geojson.features[i].properties._raw_ts * 1000);
         fmt = new Intl.DateTimeFormat("en-GB", {
@@ -148,7 +145,6 @@ function mainSpeedAltChart() {
         }).format(date);
         fmt = fmt.substr(0, 8);
         tlabels.push(geojson.features[i].properties._raw_ts * 1000);
-        xlabels.push(fmt);
     }
     let spd = get_values(SPEED)
     let alt = get_values(ALTITUDE)
@@ -160,7 +156,7 @@ function mainSpeedAltChart() {
             borderColor: "rgba(253, 128, 8, 1)", // orange
             borderWidth: 2,
             data: spd,
-            label: SPEED,
+            label: SPEED.replaceAll("_", " "),
             pointRadius: 0,
             tension: 0,
             yAxisID: "y",
@@ -169,7 +165,7 @@ function mainSpeedAltChart() {
             borderColor: "rgba(15, 128, 255, 1)", // blue
             borderWidth: 2,
             data: alt,
-            label: ALTITUDE,
+            label: ALTITUDE.replaceAll("_", " "),
             pointRadius: 0,
             tension: 0,
             yAxisID: "y1",
@@ -200,14 +196,10 @@ function mainSpeedAltChart() {
             maintainAspectRatio: false,
             onHover: (e) => {
                 const canvasPosition = Chart.helpers.getRelativePosition(e, mainChart);
-                let index = 0;
-                if (USE_TIME) {
-                    const value = mainChart.scales.x.getValueForPixel(canvasPosition.x);
-                    // get index for value
-                    index = get_index_for_value(tlabels, value);
-                } else {
-                    index = mainChart.scales.x.getValueForPixel(canvasPosition.x);
-                }
+                // get index for value
+                // index = mainChart.scales.x.getValueForPixel(canvasPosition.x);
+                const value = mainChart.scales.x.getValueForPixel(canvasPosition.x);
+                const index = get_index_for_value(tlabels, value);
                 // console.log("main", canvasPosition, value, index);
                 moveMapCursor(index);
             },
@@ -231,7 +223,7 @@ function mainSpeedAltChart() {
                     title: {
                         display: true,
                         text: "Speed (m/s)",
-                        //color: "#191",
+                        color: data["datasets"][0]["borderColor"],
                         padding: {
                             top: 30,
                             left: 0,
@@ -247,7 +239,7 @@ function mainSpeedAltChart() {
                     title: {
                         display: true,
                         text: "Altitude (m MSL)",
-                        //color: "#191",
+                        color: data["datasets"][1]["borderColor"],
                         padding: {
                             top: 30,
                             left: 0,
@@ -275,24 +267,24 @@ function mainSpeedAltChart() {
 function otherCharts() {
     let i = 0;
     let datasets = []
-    let title = ""
+    let title = []
     while (i < chartCandidates.length) {
         let label = chartCandidates[i];
-        let data = pointFeatures.map((f) => f.properties[label]);
-        title += title == "" ? label : ", " + label
+        let data = get_values(label);
+        title.push(label.replaceAll("_", " "))
         datasets.push({
             backgroundColor: get_color(i) + "60", // transparency
             borderColor: get_color(i),
             borderWidth: 2,
             data: data,
-            label: label,
+            label: label.replaceAll("_", " "),
             pointRadius: 0,
             tension: 0,
             yAxisID: MAX_DATA_PER_CHART == 2 && (i%2) == 1 ? "y1" : "y",
         });
         if (datasets.length >= MAX_DATA_PER_CHART) {
             addChart(title, datasets);
-            title = "";
+            title = [];
             datasets = [];
         }
         i++;
@@ -315,7 +307,7 @@ function get_index_for_value(arr, value) {
 }
 
 function addChart(title, datasets) {
-    const chartId = "chart" + title.replace(" ", "").replace(",", "")
+    const chartId = "chart" + title.join("").replaceAll(" ", "")
     const frame = document.getElementById("charts");
     let canvas = document.createElement("canvas");
     canvas.id = chartId;
@@ -350,14 +342,10 @@ function addChart(title, datasets) {
             maintainAspectRatio: false,
             onHover: (e) => {
                 const canvasPosition = Chart.helpers.getRelativePosition(e, otherChartsRef[chartId]);
-                let index = 0;
-                if (USE_TIME) {
-                    const value = mainChart.scales.x.getValueForPixel(canvasPosition.x);
-                    // get index for value
-                    index = get_index_for_value(tlabels, value);
-                } else {
-                    index = mainChart.scales.x.getValueForPixel(canvasPosition.x);
-                }
+                // get index for value
+                // index = mainChart.scales.x.getValueForPixel(canvasPosition.x);
+                const value = mainChart.scales.x.getValueForPixel(canvasPosition.x);
+                const index = get_index_for_value(tlabels, value);
                 // console.log("other", chartId, canvasPosition, index);
                 moveMapCursor(index);
             },
@@ -372,7 +360,7 @@ function addChart(title, datasets) {
                 },
                 title: {
                     display: true,
-                    text: title
+                    text: title.join(", ")
                 }
             },
             interaction: {
@@ -463,12 +451,7 @@ function moveMapCursor(idx) {
 }
 
 function moveChartCursor(idx) {
-    let x = 0;
-    if (USE_TIME) {
-        x = mainChart.scales.x.getPixelForValue(tlabels[idx], idx);
-    } else {
-        x = mainChart.scales.x.getPixelForValue(xlabels[idx], idx);
-    }
+    let x = mainChart.scales.x.getPixelForValue(tlabels[idx], idx);
     let yAxis = mainChart.scales.y;
     let ctx = mainChart.ctx;
     ctx.save();
@@ -479,6 +462,19 @@ function moveChartCursor(idx) {
     ctx.strokeStyle = "rgba(0, 0, 255, 0.4)";
     ctx.stroke();
     ctx.restore();
+    Object.values(otherChartsRef).forEach( (chart) => {
+        let x = chart.scales.x.getPixelForValue(tlabels[idx], idx);
+        let yAxis = chart.scales.y;
+        let ctx = chart.ctx;
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(x, yAxis.top);
+        ctx.lineTo(x, yAxis.bottom);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = "rgba(0, 0, 255, 0.4)";
+        ctx.stroke();
+        ctx.restore();
+    })
 }
 
 function get_values(label) {
