@@ -5,9 +5,15 @@
 <script src="luxon/luxon.js"></script>
 <script src="chartjs/chart.umd.js"></script>
 <script src="chartjs/chartjs-adapter-luxon.umd.js"></script>
+<script src="chartjs/chartjs-plugin-zoom.js"></script>
 <style>
 #map { height: 500px; }
 #charts { height: 200px; }
+#zoom_container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
 </style>
 </head>
 <body>
@@ -17,6 +23,7 @@
     <div id="map"></div>
     <div id="charts">
         <canvas id="mainChart"></canvas>
+        <div id="zoom_container"></div>
     </div>        
 <script language="javascript">
 // Each point in the geojson file will be represented by this almost transparent icon.
@@ -97,6 +104,7 @@ function buildMap(text) {
     // Start leaflet
     let avglat = pointFeatures.reduce( (acc, f) => acc + f.geometry.coordinates[1], 0) / pointFeatures.length;
     let avglon = pointFeatures.reduce( (acc, f) => acc + f.geometry.coordinates[0], 0) / pointFeatures.length;
+    console.log(avglat, avglon);
     let map = L.map("map").setView([avglat, avglon], 13);
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 18,
@@ -156,6 +164,24 @@ function buildSpeedAltChart() {
     let alt = get_property_values(ALTITUDE) // alt is in ft
     alt = alt.map((s) => s * ALTITUDE_CONVERT[ALTITUDE_UNIT])
 
+
+    const zoomOptions = {
+      pan: {
+        enabled: true,
+        mode: 'x',
+        modifierKey: 'shift',
+      },
+      zoom: {
+        mode: 'x',
+        drag: {
+          enabled: true,
+          borderColor: 'rgb(54, 162, 235)',
+          borderWidth: 1,
+          backgroundColor: 'rgba(54, 162, 235, 0.3)'
+        }
+      }
+    };
+
     const data = {
         labels: tlabels,
         datasets: [{
@@ -211,6 +237,7 @@ function buildSpeedAltChart() {
                 moveMapCursor(index);
             },
             plugins: {
+                zoom: zoomOptions,
                 legend: {
                     position: "top",
                 },
@@ -287,6 +314,17 @@ function buildSpeedAltChart() {
     };
     const ctx = document.getElementById("mainChart");
     mainChart = new Chart(ctx, config);
+
+    const container = document.getElementById("zoom_container");
+    let button = document.createElement("button");
+    button.type ="button";
+    button.innerHTML = "Reset zoom";
+    button.id = "zoom";
+    button.addEventListener("click", function() {
+        mainChart.resetZoom();
+    });
+    container.appendChild(button);
+
 }
 
 function buildOtherCharts() {
@@ -524,7 +562,7 @@ document.getElementById("geojsonfile")
         let fr = new FileReader();
         fr.onload = function() {
             buildMap(fr.result);
-        }
+        };
         fr.readAsText(this.files[0]);
     });
 </script>
