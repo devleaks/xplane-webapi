@@ -257,6 +257,15 @@ class FDRReader:
           "features": features
         }, geoj, indent=4)
 
+  def to_csv(self, outfile: str, all_properties: bool = False):
+    with open(outfile, "w") as fp:
+      # header
+      print(",".join(["_raw_utc_ts", "utc_time"] + [d for d in self.fdr_data]), file=fp)
+      # data
+      for row in self.data:
+        ts = datetime.strptime(row[0].strip(), "%H:%M:%S.%f")
+        ts = ts.replace(tzinfo=timezone.utc, day=self.basedate.day, month=self.basedate.month, year=self.basedate.year)
+        print(",".join([str(ts.timestamp())]+row), file=fp)
 
 # ######################################################
 #
@@ -277,6 +286,7 @@ if __name__ == "__main__":
         # print("Fields:", a.header)
         pprint(a.meta, width=120)
         a.to_geojson(outfile="out.geojson", altitude=True, all_properties=True)
+        a.to_csv(outfile="out.csv", all_properties=True)
         print(f"out.geojson: {a.length} points written, duration={a.duration}")
       else:
         print("failed to parse")
