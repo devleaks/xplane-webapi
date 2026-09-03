@@ -1,0 +1,63 @@
+fdr_version: 3.0.0
+description: Sample preference file from FDR Version 3 format description file
+frequency: 5
+report_frequency: 200
+fdr_optional:
+    - name: barometer_setting_in_hg_pilot
+      dataref: sim/cockpit2/gauges/actuators/barometer_setting_in_hg_pilot
+    - name: altitude_ft_pilot
+      dataref: sim/cockpit2/gauges/indicators/altitude_ft_pilot
+    - name: vvi_fpm_pilot
+      dataref: sim/cockpit2/gauges/indicators/vvi_fpm_pilot
+    - name: true_airspeed_kts_pilot
+      dataref: sim/cockpit2/gauges/indicators/true_airspeed_kts_pilot
+    - name: airspeed_kts_pilot
+      dataref: sim/cockpit2/gauges/indicators/airspeed_kts_pilot
+    - name: ground_speed_kt
+      dataref: sim/cockpit2/gauges/indicators/ground_speed_kt
+    - name: stall_warning_ratio
+      dataref: sim/cockpit2/annunciators/stall_warning_ratio
+    - name: flap_handle_deploy_ratio
+      dataref: sim/flightmodel2/controls/flap_handle_deploy_ratio
+    - name: flap_ratio
+      dataref: sim/cockpit2/controls/flap_ratio
+    - name: outside_air_temp_degc
+      dataref: sim/cockpit2/temperature/outside_air_temp_degc
+    - name: wind_heading_deg_mag
+      dataref: sim/cockpit2/gauges/indicators/wind_heading_deg_mag
+    - name: wind_speed_kts
+      dataref: sim/cockpit2/gauges/indicators/wind_speed_kts
+    - name: m_fuel[0]
+      dataref: sim/flightmodel/weight/m_fuel[0]
+    - name: m_fuel[1]
+      dataref: sim/flightmodel/weight/m_fuel[1]
+    - name: bus_volts[0]
+      dataref: sim/cockpit2/electrical/bus_volts[0]
+    - name: battery_amps[0]
+      dataref: sim/cockpit2/electrical/battery_amps[0]
+    - name: oil_pressure_psi[0]
+      dataref: sim/cockpit2/engine/indicators/oil_pressure_psi[0]
+    - name: oil_temperature_deg_C[0]
+      dataref: sim/cockpit2/engine/indicators/oil_temperature_deg_C[0]
+    - name: ENGN_power[0]
+      dataref: sim/flightmodel/engine/ENGN_power[0]
+    - name: prop_speed_rsc[0]
+      dataref: sim/cockpit2/engine/indicators/prop_speed_rsc[0]
+    - name: MPR_in_hg[0]
+      dataref: sim/cockpit2/engine/indicators/MPR_in_hg[0]
+    - name: fuel_flow_kg_sec[0]
+      dataref: sim/cockpit2/engine/indicators/fuel_flow_kg_sec[0]
+    - name: CHT_CYL_deg_C[0]
+      dataref: sim/cockpit2/engine/indicators/CHT_CYL_deg_C[0]
+    - name: CHT_CYL_deg_C[1]
+      dataref: sim/cockpit2/engine/indicators/CHT_CYL_deg_C[1]
+    - name: CHT_CYL_deg_C[2]
+      dataref: sim/cockpit2/engine/indicators/CHT_CYL_deg_C[2]
+    - name: CHT_CYL_deg_C[3]
+      dataref: sim/cockpit2/engine/indicators/CHT_CYL_deg_C[3]
+    - name: CHT_CYL_deg_C[4]
+      dataref: sim/cockpit2/engine/indicators/CHT_CYL_deg_C[4]
+    - name: CHT_CYL_deg_C[5]
+      dataref: sim/cockpit2/engine/indicators/CHT_CYL_deg_C[5]
+    - name: EGT_CYL_deg_C[0]
+      dataref: sim/cockpit2/engine/indicators/EGT_CYL_deg_C[0]

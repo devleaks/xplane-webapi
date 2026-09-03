@@ -1,22 +1,22 @@
 <html>
 <head>
-<link rel="stylesheet" href="leaflet/leaflet.css" crossorigin="" />
-<script src="leaflet/leaflet.js" crossorigin=""></script>
-<script src="moment/moment.js" crossorigin=""></script>
-<script src="chartjs/chart.umd.js" crossorigin=""></script>
+<link rel="stylesheet" href="leaflet/leaflet.css" />
+<script src="leaflet/leaflet.js"></script>
+<script src="luxon/luxon.js"></script>
+<script src="chartjs/chart.umd.js"></script>
+<script src="chartjs/chartjs-adapter-luxon.umd.js"></script>
 <style>
 #map { height: 500px; }
 #charts { height: 200px; }
 </style>
 </head>
 <body>
-    <div id="map"></div>
     <div id="menu">
         <input type="file" name="geojsonfile" id="geojsonfile">
     </div>
+    <div id="map"></div>
     <div id="charts">
         <canvas id="mainChart"></canvas>
-        <canvas id="otherChart"></canvas>
     </div>        
 <script language="javascript">
 const TRANSPARENT_ICON = L.icon({
@@ -26,27 +26,35 @@ const TRANSPARENT_ICON = L.icon({
     popupAnchor: [-5, -5] // point from which the popup should open relative to the iconAnchor
 });
 
+const AIRCRAFT_ICON_SIZE = 32
+const AIRCRAFT_ICON_ROTATION = 270  // deg
 const AIRCRAFT_ICON = L.icon({
-    iconUrl: "aircraft.png",
-    iconSize: [32, 32], // size of the icon
-    iconAnchor: [16, 16], // point of the icon which will correspond to marker's location
-    popupAnchor: [-34, -34] // point from which the popup should open relative to the iconAnchor
+    iconUrl: "303639.svg",
+    iconSize: [AIRCRAFT_ICON_SIZE, AIRCRAFT_ICON_SIZE], // size of the icon
+    iconAnchor: [Math.round(AIRCRAFT_ICON_SIZE/2), Math.round(AIRCRAFT_ICON_SIZE/2)], // point of the icon which will correspond to marker's location
+    popupAnchor: [-(AIRCRAFT_ICON_SIZE+2), -(AIRCRAFT_ICON_SIZE+2)] // point from which the popup should open relative to the iconAnchor
 });
 
-const SPEED = "ground_speed";
-const ALTITUDE = "altitude";
-const IGNORE = ["id", "UTC Time", "_raw_ts", "latitude", "longitude", SPEED, ALTITUDE]
+// Main chart shows speed and altitude (always)
+const SPEED = "ground_speed";  // name of property for speed
+const ALTITUDE = "altitude";  // name of property for altitude
+// list of properties to ignore for charting
+const IGNORE = ["id", "UTC Time", "_raw_ts", "latitude", "longitude", SPEED, ALTITUDE];
+const MAX_DATA_PER_CHART = 2;  // number of curves per chart, 6 is reasonable max.
+const USE_TIME = true;
 
-var geojson = {};
-var pointFeatures = {};
-var latlngs = [];
-var xlabels = [];
-var map = undefined;
-var mainChart = undefined;
-var otherChart = undefined;
-var mapCursor = undefined;
-var chartCandidates = Array();
 
+// Globals
+var geojson = {};  // whole file
+var pointFeatures = {}; // individual points
+var latlngs = [];   // minimal data for cursor
+var tlabels = [];   // global (uniform) x-axis time ticks
+var xlabels = [];   // global (uniform) x-axis label
+var mainChart = undefined; // for cursor positioning
+var mapCursor = undefined; // map cursor
+var otherChartsRef = {}; // for cursor positioning
+
+var chartCandidates = Array(); // additional charts to plot from properties
 chartCandidates.remove = function(what) {
     const index = this.indexOf(what);
     if (index > -1) {
@@ -93,7 +101,7 @@ function loadMap(text) {
     // Start leaflet
     let avglat = pointFeatures.reduce( (acc, f) => acc + f.geometry.coordinates[1], 0) / pointFeatures.length;
     let avglon = pointFeatures.reduce( (acc, f) => acc + f.geometry.coordinates[0], 0) / pointFeatures.length;
-    map = L.map("map").setView([avglat, avglon], 13);
+    let map = L.map("map").setView([avglat, avglon], 13);
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 18,
         attribution: "&copy; <a href='http://www.openstreetmap.org/copyright'>OpenStreetMap</a>"
@@ -107,16 +115,14 @@ function loadMap(text) {
         icon: AIRCRAFT_ICON
     }).addTo(map);
 
-    // add points:
-    markers.forEach((m) => {
-        m.addTo(map);
-    })
+    // add interaction "invisible" points
+    markers.forEach((m) => { m.addTo(map); })
 
-    //
-    const f = geojson.features[0];
+    // guess properties list from first point feature
+    const f = pointFeatures[0];
     chartCandidates =  Object.keys(f.properties)
         .filter((p) => typeof(f.properties[p]) == "number" && IGNORE.indexOf(p) == -1);
-    console.log(chartCandidates, chartCandidates.length);
+    // console.log(chartCandidates, chartCandidates.length);
 
     mainSpeedAltChart();
     if (chartCandidates.length > 0) {
@@ -134,8 +140,6 @@ document.getElementById("geojsonfile")
     })
 
 function mainSpeedAltChart() {
-    let spd = get_values(SPEED)
-    let alt = get_values(ALTITUDE)
     xlabels = []
     for (i = 0; i < geojson.features.length - 1; i++) {
         date = new Date(geojson.features[i].properties._raw_ts * 1000);
@@ -143,11 +147,14 @@ function mainSpeedAltChart() {
             timeStyle: "long",
         }).format(date);
         fmt = fmt.substr(0, 8);
+        tlabels.push(geojson.features[i].properties._raw_ts * 1000);
         xlabels.push(fmt);
     }
+    let spd = get_values(SPEED)
+    let alt = get_values(ALTITUDE)
 
     const data = {
-        labels: xlabels,
+        labels: tlabels,
         datasets: [{
             backgroundColor: "rgba(253, 128, 8, 0.2)",
             borderColor: "rgba(253, 128, 8, 1)", // orange
@@ -193,26 +200,30 @@ function mainSpeedAltChart() {
             maintainAspectRatio: false,
             onHover: (e) => {
                 const canvasPosition = Chart.helpers.getRelativePosition(e, mainChart);
-                const index = mainChart.scales.x.getValueForPixel(canvasPosition.x);
+                let index = 0;
+                if (USE_TIME) {
+                    const value = mainChart.scales.x.getValueForPixel(canvasPosition.x);
+                    // get index for value
+                    index = get_index_for_value(tlabels, value);
+                } else {
+                    index = mainChart.scales.x.getValueForPixel(canvasPosition.x);
+                }
+                // console.log("main", canvasPosition, value, index);
                 moveMapCursor(index);
             },
             plugins: {
                 legend: {
                     position: "top",
                 },
-                // title: {
-                //   display: true,
-                //   text: "Chart.js Line Chart"
-                // }
+                title: {
+                  display: true,
+                  text: "Above: Map, below: Aircraft speed and altitude MSL"
+                }
             },
             scales: {
-                // x: {
-                //   type: "time",
-                //   time: {
-                //     // Luxon format string
-                //     tooltipFormat: "DD T"
-                //   },
-                // },
+                x: {
+                  type: "timeseries",
+                },
                 y: {
                     type: "linear",
                     display: true,
@@ -260,25 +271,57 @@ function mainSpeedAltChart() {
     mainChart = new Chart(ctx, config);
 }
 
+
 function otherCharts() {
+    let i = 0;
     let datasets = []
-    chartCandidates.forEach((label) => {
+    let title = ""
+    while (i < chartCandidates.length) {
+        let label = chartCandidates[i];
         let data = pointFeatures.map((f) => f.properties[label]);
+        title += title == "" ? label : ", " + label
         datasets.push({
-            backgroundColor: "rgba(15, 128, 255, 0.2)",
-            borderColor: get_color(datasets.length), // blue
+            backgroundColor: get_color(i) + "60", // transparency
+            borderColor: get_color(i),
             borderWidth: 2,
             data: data,
             label: label,
             pointRadius: 0,
             tension: 0,
-            yAxisID: "y1",
+            yAxisID: MAX_DATA_PER_CHART == 2 && (i%2) == 1 ? "y1" : "y",
         });
-    })
-    const data = {
-        labels: xlabels,
-        datasets: datasets
-    };
+        if (datasets.length >= MAX_DATA_PER_CHART) {
+            addChart(title, datasets);
+            title = "";
+            datasets = [];
+        }
+        i++;
+    }
+    if (datasets.length > 0) {
+        addChart(title, datasets);
+    }
+}
+
+function get_index_for_value(arr, value) {
+    let index = arr.indexOf(value);
+    if (index > -1) { // found
+        return index;
+    }
+    index = 0;
+    while (value > arr[index] && index < arr.length) {
+        index++;
+    }
+    return index;
+}
+
+function addChart(title, datasets) {
+    const chartId = "chart" + title.replace(" ", "").replace(",", "")
+    const frame = document.getElementById("charts");
+    let canvas = document.createElement("canvas");
+    canvas.id = chartId;
+    frame.appendChild(canvas);
+    const ctx = document.getElementById(chartId);
+
     const config = {
         type: "line",
         plugins: [{ // https://stackoverflow.com/questions/68058199/chartjs-need-help-on-drawing-a-vertical-line-when-hovering-cursor
@@ -298,27 +341,29 @@ function otherCharts() {
                 }
             }
         }],
-        data: data,
+        data: {
+            labels: tlabels,
+            datasets: datasets
+        },
         options: {
             responsive: true,
             maintainAspectRatio: false,
             onHover: (e) => {
-                const canvasPosition = Chart.helpers.getRelativePosition(e, mainChart);
-                const index = mainChart.scales.x.getValueForPixel(canvasPosition.x);
+                const canvasPosition = Chart.helpers.getRelativePosition(e, otherChartsRef[chartId]);
+                let index = 0;
+                if (USE_TIME) {
+                    const value = mainChart.scales.x.getValueForPixel(canvasPosition.x);
+                    // get index for value
+                    index = get_index_for_value(tlabels, value);
+                } else {
+                    index = mainChart.scales.x.getValueForPixel(canvasPosition.x);
+                }
+                // console.log("other", chartId, canvasPosition, index);
                 moveMapCursor(index);
             },
             scales: {
-                // x: {
-                //   type: "time",
-                //   time: {
-                //     // Luxon format string
-                //     tooltipFormat: "DD T"
-                //   },
-                // },
-                y: {
-                    type: "linear",
-                    display: false,
-                    position: "left",
+                x: {
+                  type: "timeseries",
                 },
             },
             plugins: {
@@ -327,7 +372,7 @@ function otherCharts() {
                 },
                 title: {
                     display: true,
-                    text: "Other Data"
+                    text: title
                 }
             },
             interaction: {
@@ -336,8 +381,49 @@ function otherCharts() {
             }
         },
     };
-    const ctx = document.getElementById("otherChart");
-    otherChart = new Chart(ctx, config);
+    if (MAX_DATA_PER_CHART == 2 && datasets.length == 2) {
+        let before = config["options"]["scales"] ? config["options"]["scales"] : {}
+        config["options"]["scales"] = Object.assign({}, before, {
+                y: {
+                    type: "linear",
+                    display: true,
+                    position: "left",
+                    title: {
+                        display: true,
+                        text: datasets[0]["label"],
+                        color: datasets[0]["borderColor"],
+                        padding: {
+                            top: 30,
+                            left: 0,
+                            right: 0,
+                            bottom: 0
+                        }
+                    },
+                },
+                y1: {
+                    type: "linear",
+                    display: true,
+                    position: "right",
+                    title: {
+                        display: true,
+                        text: datasets[1]["label"],
+                        color: datasets[1]["borderColor"],
+                        padding: {
+                            top: 30,
+                            left: 0,
+                            right: 0,
+                            bottom: 0
+                        }
+                    },
+                    // grid line settings
+                    grid: {
+                        drawOnChartArea: false, // only want the grid lines for one axis to show up
+                    },
+                },
+            }
+        );
+    }
+    otherChartsRef[chartId] = new Chart(ctx, config);
 }
 
 function convertDegreesToRadians(degrees) {
@@ -349,6 +435,10 @@ function convertRadiansToDegrees(radians) {
 }
 
 function bearing(src, dst) {
+    if (src == undefined || dst == undefined) {
+        console.log("warning", src, dst);
+        return 0;
+    }
     lat1 = convertDegreesToRadians(src.geometry.coordinates[1])
     lon1 = convertDegreesToRadians(src.geometry.coordinates[0])
     lat2 = convertDegreesToRadians(dst.geometry.coordinates[1])
@@ -360,16 +450,25 @@ function bearing(src, dst) {
 }
 
 function moveMapCursor(idx) {
-    rot = bearing(geojson.features[idx], geojson.features[idx+1]);
+    if (idx == undefined) {
+        console.log("warning", idx);
+        return;
+    }
+    let rot = bearing(geojson.features[idx], geojson.features[idx+1]) + AIRCRAFT_ICON_ROTATION;
     mapCursor.setLatLng(latlngs[idx]);
-    mapCursor._icon.style.transformOrigin = '16px 16px';
+    mapCursor._icon.style.transformOrigin = Math.round(AIRCRAFT_ICON_SIZE/2) + "px " +
+                                            Math.round(AIRCRAFT_ICON_SIZE/2) + "px";
     mapCursor._icon.style.transform += ' rotateZ(' + Math.round(rot) + 'deg)';
     // console.log(mapCursor._icon.style.transform);
 }
 
 function moveChartCursor(idx) {
-    console.log(idx, xlabels[idx])
-    let x = mainChart.scales.x.getPixelForValue(xlabels[idx], idx);
+    let x = 0;
+    if (USE_TIME) {
+        x = mainChart.scales.x.getPixelForValue(tlabels[idx], idx);
+    } else {
+        x = mainChart.scales.x.getPixelForValue(xlabels[idx], idx);
+    }
     let yAxis = mainChart.scales.y;
     let ctx = mainChart.ctx;
     ctx.save();
@@ -387,7 +486,28 @@ function get_values(label) {
 }
 
 COLORS = [
-    '#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe', '#008080', '#e6beff', '#9a6324', '#fffac8', '#800000', '#aaffc3', '#808000', '#ffd8b1', '#000075', '#808080', '#ffffff', '#000000'
+    '#e6194b',
+    '#3cb44b',
+    '#ffe119',
+    '#4363d8',
+    '#f58231',
+    '#911eb4',
+    '#46f0f0',
+    '#f032e6',
+    '#bcf60c',
+    '#fabebe',
+    '#008080',
+    '#e6beff',
+    '#9a6324',
+    '#fffac8',
+    '#800000',
+    '#aaffc3',
+    '#808000',
+    '#ffd8b1',
+    '#000075',
+    '#808080',
+    '#ffffff',
+    '#000000'
 ]
 
 function get_color(idx) {

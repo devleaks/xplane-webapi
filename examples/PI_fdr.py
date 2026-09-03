@@ -130,6 +130,7 @@ class FDRData:
     range_max: int = -1
     callback: Callable | None = None
     unit: str | None = None
+    force_datatype: str | None = None
     factor: float = 1.0
     dref = None
 

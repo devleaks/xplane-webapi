@@ -34,6 +34,25 @@ def clean(s: str) -> tuple:
   return a[0], SEP.join(a[1:]), s[s.index(SEP)+1:].strip()
 
 
+def best_type(s) -> int | float | str:
+  if type(s) is float:
+    return s
+  if type(s) is int:
+    return s
+  if type(s) is str:  # type to convert
+    try:
+      a = int(s)
+      return a
+    except ValueError:
+      pass
+    try:
+      a = float(s)
+      return a
+    except ValueError:
+      pass
+  return s
+
+
 class FDRReader:
 
   def __init__(self, filename: str = "out.fdr") -> None:
@@ -156,14 +175,17 @@ class FDRReader:
     for dref, v in zip(self.header[1:], data):
       if self.has_fdrdata:
         meta = self.fdr_data[dref]
-        if meta.dtype == "int":
-          props[dref] = int(float(v))
-        elif meta.dtype == "float":
-          props[dref] = float(v)
+        if meta.dref is not None:
+          if meta.dref.dtype == "int":
+            props[dref] = int(float(v))
+          elif meta.dref.dtype == "float":
+            props[dref] = float(v)
+          else:
+            props[dref] = best_type(v)
         else:
-          props[dref] = v
+          props[dref] = best_type(v)
       else:
-        props[dref] = v
+        props[dref] = best_type(v)
     return props # {self.header[i]: float(data[i].strip()) for i in range(1, len(data))}
 
   def to_geojson(self, outfile: str, altitude: bool = False, all_properties: bool = False):
@@ -202,7 +224,7 @@ class FDRReader:
         if hdg is not None:
           props = props | {"heading": float(row[hdg.data_index]) }
         if alt is not None:
-          props = props | {"altidude":  alt}
+          props = props | {"altitude":  alt}
       # feature
       features.append({
         "type": "Feature",
@@ -254,7 +276,7 @@ if __name__ == "__main__":
       if a.parse():
         # print("Fields:", a.header)
         pprint(a.meta, width=120)
-        a.to_geojson(outfile="out.geojson", altitude=True)
+        a.to_geojson(outfile="out.geojson", altitude=True, all_properties=True)
         print(f"out.geojson: {a.length} points written, duration={a.duration}")
       else:
         print("failed to parse")
