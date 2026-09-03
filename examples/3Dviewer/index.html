@@ -19,6 +19,11 @@
         <canvas id="mainChart"></canvas>
     </div>        
 <script language="javascript">
+// Each point in the geojson file will be represented by this almost transparent icon.
+// The goal is to provide interactivity and react when the icon is hover'ed.
+// If number of point exceeds a threshold, a sampling should be used.
+// If necessary, icon can be enlarged.
+// Build inline icon here: https://png-pixel.com
 const TRANSPARENT_ICON = L.icon({
     iconUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+P+/HgAFhAJ/wlseKgAAAABJRU5ErkJggg==",
     iconSize: [4, 4], // size of the icon
@@ -26,22 +31,37 @@ const TRANSPARENT_ICON = L.icon({
     popupAnchor: [-5, -5] // point from which the popup should open relative to the iconAnchor
 });
 
+// This icon represents the position of the aircraft in the analysis.
 const AIRCRAFT_ICON_SIZE = 32
 const AIRCRAFT_ICON_ROTATION = 270  // deg
 const AIRCRAFT_ICON = L.icon({
-    iconUrl: "303639.svg",
+    iconUrl: "303639.svg", // this one is looking right...
     iconSize: [AIRCRAFT_ICON_SIZE, AIRCRAFT_ICON_SIZE], // size of the icon
     iconAnchor: [Math.round(AIRCRAFT_ICON_SIZE/2), Math.round(AIRCRAFT_ICON_SIZE/2)], // point of the icon which will correspond to marker's location
     popupAnchor: [-(AIRCRAFT_ICON_SIZE+2), -(AIRCRAFT_ICON_SIZE+2)] // point from which the popup should open relative to the iconAnchor
 });
 
 // Main chart shows speed and altitude (always)
-const SPEED = "ground_speed";  // name of property for speed
-const ALTITUDE = "altitude";  // name of property for altitude
-// list of properties to ignore for charting
+// Like at flightradar24 and flightaware.
+const SPEED = "ground_speed";  // name of GeoJSON feature property for speed
+const SPEED_CONVERT = {
+    "m/s": 1,
+    "km/h": 3.6,
+    "kt": 1.943844
+};
+SPEED_UNIT = "kt";
+
+const ALTITUDE = "altitude";  // name of GeoJSON feature property for altitude
+const ALTITUDE_CONVERT = {
+    "m": 0.3048,
+    "ft": 1,
+    "fl": 0.001
+};
+ALTITUDE_UNIT = "ft";
+
+// list of GeoJSON feature properties to ignore for charting
 const IGNORE = ["id", "UTC Time", "_raw_ts", "latitude", "longitude", SPEED, ALTITUDE];
 const MAX_DATA_PER_CHART = 4;  // number of curves per chart, 6 is reasonable max.
-
 
 // Globals
 var geojson = {};  // whole file
@@ -50,7 +70,7 @@ var latlngs = [];   // minimal data for cursor
 var tlabels = [];   // global (uniform) x-axis time ticks
 var mainChart = undefined; // for cursor positioning
 var mapCursor = undefined; // map cursor
-var otherChartsRef = {}; // for cursor positioning
+var otherCharts = {}; // for cursor positioning
 
 var chartCandidates = Array(); // additional charts to plot from properties
 chartCandidates.remove = function(what) {
@@ -60,29 +80,7 @@ chartCandidates.remove = function(what) {
     }
 }
 
-function best_guess(s) {
-    if (typeof(s) == "number") {
-        return s;
-    }
-    if (typeof(s) == "string") {
-        try {
-            let a = parseInt(s);
-            return a;
-        } catch(e) {
-            ;
-        }
-        try {
-            let a = parseFloat(s);
-            return a;
-        } catch(e) {
-            ;
-        }
-        return s;
-    }
-    return s;
-}
-
-function loadMap(text) {
+function buildMap(text) {
     geojson = JSON.parse(text);
     pointFeatures = geojson.features.filter((f) => f.geometry.type == "Point");
     latlngs = pointFeatures.map((f) => [f.geometry.coordinates[1], f.geometry.coordinates[0]]);
@@ -122,22 +120,29 @@ function loadMap(text) {
         .filter((p) => typeof(f.properties[p]) == "number" && IGNORE.indexOf(p) == -1);
     // console.log(chartCandidates, chartCandidates.length);
 
-    mainSpeedAltChart();
+    buildSpeedAltChart();
     if (chartCandidates.length > 0) {
-        otherCharts();
+        buildOtherCharts();
     }
 }
 
-document.getElementById("geojsonfile")
-    .addEventListener("change", function() {
-        let fr = new FileReader();
-        fr.onload = function() {
-            loadMap(fr.result);
-        }
-        fr.readAsText(this.files[0]);
-    })
+function get_property_values(label) {
+    return pointFeatures.map((f) => f.properties[label]);
+}
 
-function mainSpeedAltChart() {
+function get_index_for_value(arr, value) {
+    let index = arr.indexOf(value);
+    if (index > -1) { // found
+        return index;
+    }
+    index = 0;
+    while (value > arr[index] && index < arr.length) {
+        index++;
+    }
+    return index;
+}
+
+function buildSpeedAltChart() {
     for (i = 0; i < geojson.features.length - 1; i++) {
         date = new Date(geojson.features[i].properties._raw_ts * 1000);
         fmt = new Intl.DateTimeFormat("en-GB", {
@@ -146,8 +151,10 @@ function mainSpeedAltChart() {
         fmt = fmt.substr(0, 8);
         tlabels.push(geojson.features[i].properties._raw_ts * 1000);
     }
-    let spd = get_values(SPEED)
-    let alt = get_values(ALTITUDE)
+    let spd = get_property_values(SPEED)  // speed is in m/s
+    spd = spd.map((s) => s * SPEED_CONVERT[SPEED_UNIT])
+    let alt = get_property_values(ALTITUDE) // alt is in ft
+    alt = alt.map((s) => s * ALTITUDE_CONVERT[ALTITUDE_UNIT])
 
     const data = {
         labels: tlabels,
@@ -209,8 +216,27 @@ function mainSpeedAltChart() {
                 },
                 title: {
                   display: true,
-                  text: "Above: Map, below: Aircraft speed and altitude MSL"
-                }
+                  text: "Above: map, below: Aircraft speed and altitude MSL"
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            let label = context.dataset.label || '';
+
+                            if (label) {
+                                label += ': ';
+                            }
+                            if (context.parsed.y !== null) {
+                                if (context.dataset.label == SPEED.replaceAll("_", " ")) {
+                                    label += Math.round(context.parsed.y, 0) + SPEED_UNIT;
+                                } else if (context.dataset.label == ALTITUDE.replaceAll("_", " ")) {
+                                    label += Math.round(context.parsed.y, 0) + ALTITUDE_UNIT;
+                                }
+                            }
+                            return label;
+                        }
+                    }
+                },
             },
             scales: {
                 x: {
@@ -222,7 +248,7 @@ function mainSpeedAltChart() {
                     position: "left",
                     title: {
                         display: true,
-                        text: "Speed (m/s)",
+                        text: "Speed (" + SPEED_UNIT + ")",
                         color: data["datasets"][0]["borderColor"],
                         padding: {
                             top: 30,
@@ -238,7 +264,7 @@ function mainSpeedAltChart() {
                     position: "right",
                     title: {
                         display: true,
-                        text: "Altitude (m MSL)",
+                        text: "Altitude (" + ALTITUDE_UNIT + ")",
                         color: data["datasets"][1]["borderColor"],
                         padding: {
                             top: 30,
@@ -256,21 +282,20 @@ function mainSpeedAltChart() {
             interaction: {
                 intersect: false,
                 mode: "index",
-            }
+            },
         },
     };
     const ctx = document.getElementById("mainChart");
     mainChart = new Chart(ctx, config);
 }
 
-
-function otherCharts() {
+function buildOtherCharts() {
     let i = 0;
     let datasets = []
     let title = []
     while (i < chartCandidates.length) {
         let label = chartCandidates[i];
-        let data = get_values(label);
+        let data = get_property_values(label);
         title.push(label.replaceAll("_", " "))
         datasets.push({
             backgroundColor: get_color(i) + "60", // transparency
@@ -292,18 +317,6 @@ function otherCharts() {
     if (datasets.length > 0) {
         addChart(title, datasets);
     }
-}
-
-function get_index_for_value(arr, value) {
-    let index = arr.indexOf(value);
-    if (index > -1) { // found
-        return index;
-    }
-    index = 0;
-    while (value > arr[index] && index < arr.length) {
-        index++;
-    }
-    return index;
 }
 
 function addChart(title, datasets) {
@@ -341,7 +354,7 @@ function addChart(title, datasets) {
             responsive: true,
             maintainAspectRatio: false,
             onHover: (e) => {
-                const canvasPosition = Chart.helpers.getRelativePosition(e, otherChartsRef[chartId]);
+                const canvasPosition = Chart.helpers.getRelativePosition(e, otherCharts[chartId]);
                 // get index for value
                 // index = mainChart.scales.x.getValueForPixel(canvasPosition.x);
                 const value = mainChart.scales.x.getValueForPixel(canvasPosition.x);
@@ -411,7 +424,7 @@ function addChart(title, datasets) {
             }
         );
     }
-    otherChartsRef[chartId] = new Chart(ctx, config);
+    otherCharts[chartId] = new Chart(ctx, config);
 }
 
 function convertDegreesToRadians(degrees) {
@@ -462,7 +475,7 @@ function moveChartCursor(idx) {
     ctx.strokeStyle = "rgba(0, 0, 255, 0.4)";
     ctx.stroke();
     ctx.restore();
-    Object.values(otherChartsRef).forEach( (chart) => {
+    Object.values(otherCharts).forEach( (chart) => {
         let x = chart.scales.x.getPixelForValue(tlabels[idx], idx);
         let yAxis = chart.scales.y;
         let ctx = chart.ctx;
@@ -475,10 +488,6 @@ function moveChartCursor(idx) {
         ctx.stroke();
         ctx.restore();
     })
-}
-
-function get_values(label) {
-    return pointFeatures.map((f) => f.properties[label]);
 }
 
 COLORS = [
@@ -504,11 +513,20 @@ COLORS = [
     '#808080',
     '#ffffff',
     '#000000'
-]
+];
 
 function get_color(idx) {
     return COLORS[idx % COLORS.length];
 }
+
+document.getElementById("geojsonfile")
+    .addEventListener("change", function() {
+        let fr = new FileReader();
+        fr.onload = function() {
+            buildMap(fr.result);
+        }
+        fr.readAsText(this.files[0]);
+    });
 </script>
 </body>
 </html>
