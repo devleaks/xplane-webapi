@@ -1,3 +1,5 @@
+fdr_version: 4.0.0
+description: Sample test preference file
 frequency: 5
 report_frequency: 200
 fdr_optional:
@@ -11,6 +13,9 @@ fdr_optional:
     dataref: sim/cockpit2/gauges/indicators/vvi_fpm_pilot
     unit: ft/min
     callback: "lambda x: x * 1.0"
+  - name: ellipsoid_height
+    dataref: sim/flightmodel2/position/ellipsoid_height
+    unit: m
   - name: tracking
     dataref: sim/cockpit2/gauges/indicators/ground_track_true_pilot
     unit: T
