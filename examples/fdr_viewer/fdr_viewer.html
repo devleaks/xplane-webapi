@@ -36,7 +36,10 @@ body.dragging {
         <!-- additional charts will come here -->
     </div>        
 <script language="javascript">
-const VERSION = "1.0.0"
+// Ideas, to dos, etc.
+// When zooming, sync all charts
+// When zooming, set 2 carets on min, max on path on map
+const VERSION = "1.0.1"
 // File types for FDR: GeoJSON
 const ALLOWED_FILE_TYPES = ["application/json", "application/geo+json"]
 // Each point in the geojson file will be represented by this almost transparent icon.
@@ -149,6 +152,9 @@ function buildMap(text) {
 }
 
 function propertyValues(label) {
+    if (pointFeatures[0].properties[label] == undefined) {
+        return [];
+    }
     return pointFeatures.map((f) => f.properties[label]);
 }
 
@@ -157,6 +163,8 @@ function indexForValue(arr, value) {
     if (index > -1) { // found
         return index;
     }
+    // this only works if values are ordered,
+    // solely used for time, which is ordered.
     index = 0;
     while (value > arr[index] && index < arr.length) {
         index++;

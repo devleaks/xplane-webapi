@@ -202,10 +202,10 @@ class FDRReader:
     features = []
     lines = []
     feature_index = 0
+    if type(properties) is FDR_STDOUT:
+      properties = properties.value
     if properties is None:
       properties = set(self.fdr_data.keys())  # all of them
-    elif type(properties) is FDR_STDOUT:
-      properties = properties.value
     properties = {p for p in properties if p in self.fdr_data}  # keeep those that exists
     for row in self.data:
       # coordinates
@@ -262,6 +262,33 @@ class FDRReader:
     # if 3D, add draped polygon
     if altitude:
       AIRPORT_ALT = min([a[2] for a in lines])
+      # whole path with no altitude
+      feature_index += 1
+      features.append({
+        "type": "Feature",
+        "id": feature_index,
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [[l[0], l[1]] for l in lines]
+        },
+        "properties": {
+          "name": "flight path, no altitude"
+        }
+      })
+      # whole path with airport altitude
+      feature_index += 1
+      features.append({
+        "type": "Feature",
+        "id": feature_index,
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [[l[0], l[1], AIRPORT_ALT] for l in lines]
+        },
+        "properties": {
+          "name": "flight path, ground altitude"
+        }
+      })
+      # draped polygon
       ground = [[l[0], l[1], AIRPORT_ALT] for l in lines[::-1]]
       polygon = lines + ground
       polygon.append(lines[0])  # close it
@@ -285,10 +312,10 @@ class FDRReader:
         }, geoj, indent=4)
 
   def to_csv(self, outfile: str, properties: set | None = None):
+    if type(properties) is FDR_STDOUT:
+      properties = properties.value
     if properties is None:
       properties = set(self.fdr_data.keys())  # all of them
-    elif type(properties) is FDR_STDOUT:
-      properties = properties.value
     else:
       properties.add("latitude")
       properties.add("longitude")
@@ -322,7 +349,7 @@ if __name__ == "__main__":
       if a.parse():
         # print("Fields:", a.header)
         pprint(a.meta, width=120)
-        props = set() # FDR_STDOUT.STD  # {"altitude"}
+        props = FDR_STDOUT.ALL # FDR_STDOUT.STD  # {"altitude"}
         a.to_geojson(outfile="out.geojson", altitude=True, properties=props)
         a.to_csv(outfile="out.csv", properties=props)
         print(f"{a.length} points written, duration={a.duration}")
