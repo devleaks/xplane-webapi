@@ -36,6 +36,7 @@ body.dragging {
         <!-- additional charts will come here -->
     </div>        
 <script language="javascript">
+const VERSION = "1.0.0"
 // File types for FDR: GeoJSON
 const ALLOWED_FILE_TYPES = ["application/json", "application/geo+json"]
 // Each point in the geojson file will be represented by this almost transparent icon.
@@ -54,9 +55,9 @@ const TRANSPARENT_ICON = L.icon({
 // (silhouette of a A320)
 const AIRCRAFT_ICON_SIZE = 32
 const AIRCRAFT_ICON_ROTATION = 0  // deg
-const AIRCRAFT_COLOR = [0, 0, 192].join("%2C")
+const AIRCRAFT_COLOR = [0, 0, 192]
 const AIRCRAFT_ICON = L.icon({
-    iconUrl: "data:image/svg+xml,%3Csvg width%3D%22100%25%22 height%3D%22100%25%22 viewBox%3D%220 0 826 826%22 version%3D%221.1%22 xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22 xmlns%3Axlink%3D%22http%3A%2F%2Fwww.w3.org%2F1999%2Fxlink%22 xml%3Aspace%3D%22preserve%22 xmlns%3Aserif%3D%22http%3A%2F%2Fwww.serif.com%2F%22 style%3D%22fill-rule%3Aevenodd%3Bclip-rule%3Aevenodd%3Bstroke-linejoin%3Around%3Bstroke-miterlimit%3A2%3B%22%3E%3Cg transform%3D%22matrix(1%2C0%2C0%2C1%2C416%2C79)%22%3E%3Cpath d%3D%22M-1.714%2C-0.336C8.374%2C-0.336 14.25%2C10.744 18.188%2C20.031C26.11%2C40.454 32%2C199.4 32%2C196C40.047%2C200.371 88%2C227 88%2C227C88%2C227 86.185%2C201.867 89%2C196C93.697%2C191.303 104.74%2C192.785 111.125%2C192.75L114.004%2C192.688C119.749%2C192.656 124.038%2C192.973 129%2C196C131.92%2C200.788 130.195%2C245.368 131%2C248C133.359%2C250.387 370.448%2C383.785 371.15%2C384.177C373.119%2C385.203 373.119%2C385.203 376%2C385L376.875%2C382.563C378%2C380 378%2C380 380%2C379C381.645%2C384.979 382.578%2C390.765 383.125%2C396.938L383.38%2C399.793C384.644%2C415.426 384.737%2C431.397 383%2C447L381%2C447C379.293%2C443.587 379.203%2C439.702 378.695%2C435.945C377.948%2C432.779 377.142%2C431.404 375%2C429C373.045%2C427.886 256.349%2C387.47 254%2C387C254%2C387 112.284%2C345.142 110%2C344C110%2C344 38.496%2C355.33 32%2C356.5C31.089%2C359.232 30.633%2C407.465 30.599%2C417.161C30.465%2C453.123 27.07%2C511.913 28%2C507C30.656%2C508.26 122%2C578 122%2C578C123.215%2C581.4 123.021%2C605.866 123%2C609C114.129%2C607.024 16.945%2C581.006 14%2C580C14%2C580 1.797%2C610.533 1.551%2C614.19L-3.952%2C654.387L-8.735%2C614.374C-8.735%2C614.374 -21%2C583 -21%2C581C-34.407%2C584.007 -128.884%2C609 -130%2C609C-129.889%2C604.999 -128.842%2C581.662 -128.842%2C581.662C-128.173%2C577.161 -37.267%2C508.996 -35.734%2C507.82C-35.74%2C505.243 -37.08%2C419.789 -37.069%2C413.562C-37.058%2C407.179 -37.021%2C368.971 -37%2C356.5C-40.759%2C355.213 -117%2C344 -117%2C344C-117%2C344 -262.876%2C387.164 -264.813%2C387.75C-264.813%2C387.75 -379.932%2C428.339 -383%2C430C-383.946%2C432.763 -384.653%2C435.29 -385.25%2C438.125L-385.773%2C440.41C-386.197%2C442.27 -386.601%2C444.135 -387%2C446L-388%2C446C-390.521%2C426.911 -390.852%2C408.209 -388.625%2C389.063L-388.243%2C385.757C-387.505%2C380.037 -387.505%2C380.037 -387%2C378L-385%2C377L-382%2C385C-378.78%2C384.195 -137.816%2C249.059 -137%2C247C-136.935%2C245.483 -137.568%2C199.751 -134.632%2C195.867C-128.769%2C191.707 -121%2C192.784 -114.063%2C192.75L-110.854%2C192.688C-104.771%2C192.657 -100.342%2C193.006 -95%2C196C-93%2C198 -92.959%2C222.715 -93%2C226C-85.091%2C222.166 -42%2C197 -38%2C197C-38%2C198.98 -33.461%2C46.277 -22%2C20.031C-22%2C20.031 -11.801%2C-0.336 -1.714%2C-0.336Z%22 style%3D%22fill%3Argb("+AIRCRAFT_COLOR+")%3Bfill-rule%3Anonzero%3B%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E",
+    iconUrl: "data:image/svg+xml,%3Csvg width%3D%22100%25%22 height%3D%22100%25%22 viewBox%3D%220 0 826 826%22 version%3D%221.1%22 xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22 xmlns%3Axlink%3D%22http%3A%2F%2Fwww.w3.org%2F1999%2Fxlink%22 xml%3Aspace%3D%22preserve%22 xmlns%3Aserif%3D%22http%3A%2F%2Fwww.serif.com%2F%22 style%3D%22fill-rule%3Aevenodd%3Bclip-rule%3Aevenodd%3Bstroke-linejoin%3Around%3Bstroke-miterlimit%3A2%3B%22%3E%3Cg transform%3D%22matrix(1%2C0%2C0%2C1%2C416%2C79)%22%3E%3Cpath d%3D%22M-1.714%2C-0.336C8.374%2C-0.336 14.25%2C10.744 18.188%2C20.031C26.11%2C40.454 32%2C199.4 32%2C196C40.047%2C200.371 88%2C227 88%2C227C88%2C227 86.185%2C201.867 89%2C196C93.697%2C191.303 104.74%2C192.785 111.125%2C192.75L114.004%2C192.688C119.749%2C192.656 124.038%2C192.973 129%2C196C131.92%2C200.788 130.195%2C245.368 131%2C248C133.359%2C250.387 370.448%2C383.785 371.15%2C384.177C373.119%2C385.203 373.119%2C385.203 376%2C385L376.875%2C382.563C378%2C380 378%2C380 380%2C379C381.645%2C384.979 382.578%2C390.765 383.125%2C396.938L383.38%2C399.793C384.644%2C415.426 384.737%2C431.397 383%2C447L381%2C447C379.293%2C443.587 379.203%2C439.702 378.695%2C435.945C377.948%2C432.779 377.142%2C431.404 375%2C429C373.045%2C427.886 256.349%2C387.47 254%2C387C254%2C387 112.284%2C345.142 110%2C344C110%2C344 38.496%2C355.33 32%2C356.5C31.089%2C359.232 30.633%2C407.465 30.599%2C417.161C30.465%2C453.123 27.07%2C511.913 28%2C507C30.656%2C508.26 122%2C578 122%2C578C123.215%2C581.4 123.021%2C605.866 123%2C609C114.129%2C607.024 16.945%2C581.006 14%2C580C14%2C580 1.797%2C610.533 1.551%2C614.19L-3.952%2C654.387L-8.735%2C614.374C-8.735%2C614.374 -21%2C583 -21%2C581C-34.407%2C584.007 -128.884%2C609 -130%2C609C-129.889%2C604.999 -128.842%2C581.662 -128.842%2C581.662C-128.173%2C577.161 -37.267%2C508.996 -35.734%2C507.82C-35.74%2C505.243 -37.08%2C419.789 -37.069%2C413.562C-37.058%2C407.179 -37.021%2C368.971 -37%2C356.5C-40.759%2C355.213 -117%2C344 -117%2C344C-117%2C344 -262.876%2C387.164 -264.813%2C387.75C-264.813%2C387.75 -379.932%2C428.339 -383%2C430C-383.946%2C432.763 -384.653%2C435.29 -385.25%2C438.125L-385.773%2C440.41C-386.197%2C442.27 -386.601%2C444.135 -387%2C446L-388%2C446C-390.521%2C426.911 -390.852%2C408.209 -388.625%2C389.063L-388.243%2C385.757C-387.505%2C380.037 -387.505%2C380.037 -387%2C378L-385%2C377L-382%2C385C-378.78%2C384.195 -137.816%2C249.059 -137%2C247C-136.935%2C245.483 -137.568%2C199.751 -134.632%2C195.867C-128.769%2C191.707 -121%2C192.784 -114.063%2C192.75L-110.854%2C192.688C-104.771%2C192.657 -100.342%2C193.006 -95%2C196C-93%2C198 -92.959%2C222.715 -93%2C226C-85.091%2C222.166 -42%2C197 -38%2C197C-38%2C198.98 -33.461%2C46.277 -22%2C20.031C-22%2C20.031 -11.801%2C-0.336 -1.714%2C-0.336Z%22 style%3D%22fill%3Argb("+AIRCRAFT_COLOR.join("%2C")+")%3Bfill-rule%3Anonzero%3B%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E",
     iconSize: [AIRCRAFT_ICON_SIZE, AIRCRAFT_ICON_SIZE], // size of the icon
     iconAnchor: [Math.round(AIRCRAFT_ICON_SIZE/2), Math.round(AIRCRAFT_ICON_SIZE/2)], // point of the icon which will correspond to marker's location
     popupAnchor: [-(AIRCRAFT_ICON_SIZE+2), -(AIRCRAFT_ICON_SIZE+2)] // point from which the popup should open relative to the iconAnchor
@@ -71,6 +72,7 @@ const SPEED_CONVERT = {
     "kt": 1.943844
 };
 SPEED_UNIT = "kt";
+SPEED_COLOR = [253, 128, 8];
 
 const ALTITUDE = "altitude";  // name of GeoJSON feature property for altitude
 const ALTITUDE_CONVERT = {
@@ -79,11 +81,15 @@ const ALTITUDE_CONVERT = {
     "fl": 0.001
 };
 ALTITUDE_UNIT = "ft";
+ALTITUDE_COLOR = [15, 128, 255];
 
 // list of "additional" GeoJSON feature properties to ignore for charting
 const IGNORE = ["id", "UTC Time", "_raw_ts", "latitude", "longitude", SPEED, ALTITUDE];
+const CHART_CURSOR_COLOR = "rgba(0, 0, 255, 0.4)";
 const MAX_DATA_PER_CHART = 4;  // number of curves per chart, 6 is reasonable max.
 
+// Code
+//
 // Globals
 var geojson = {};  // whole file
 var pointFeatures = {}; // individual points
@@ -142,11 +148,11 @@ function buildMap(text) {
     }
 }
 
-function get_property_values(label) {
+function propertyValues(label) {
     return pointFeatures.map((f) => f.properties[label]);
 }
 
-function get_index_for_value(arr, value) {
+function indexForValue(arr, value) {
     let index = arr.indexOf(value);
     if (index > -1) { // found
         return index;
@@ -159,42 +165,24 @@ function get_index_for_value(arr, value) {
 }
 
 function buildSpeedAltChart() {
-    for (i = 0; i < geojson.features.length - 1; i++) {
-        date = new Date(geojson.features[i].properties._raw_ts * 1000);
+    for (i = 0; i < pointFeatures.length; i++) {
+        date = new Date(pointFeatures[i].properties._raw_ts * 1000);
         fmt = new Intl.DateTimeFormat("en-GB", {
             timeStyle: "long",
         }).format(date);
         fmt = fmt.substr(0, 8);
-        tlabels.push(geojson.features[i].properties._raw_ts * 1000);
+        tlabels.push(pointFeatures[i].properties._raw_ts * 1000);
     }
-    let spd = get_property_values(SPEED)  // speed is in m/s
+    let spd = propertyValues(SPEED)  // speed is in m/s
     spd = spd.map((s) => s * SPEED_CONVERT[SPEED_UNIT])
-    let alt = get_property_values(ALTITUDE) // alt is in ft
+    let alt = propertyValues(ALTITUDE) // alt is in ft
     alt = alt.map((s) => s * ALTITUDE_CONVERT[ALTITUDE_UNIT])
-
-
-    const zoomOptions = {
-      pan: {
-        enabled: true,
-        mode: 'x',
-        modifierKey: 'shift',
-      },
-      zoom: {
-        mode: 'x',
-        drag: {
-          enabled: true,
-          borderColor: 'rgb(54, 162, 235)',
-          borderWidth: 1,
-          backgroundColor: 'rgba(54, 162, 235, 0.3)'
-        }
-      }
-    };
 
     const data = {
         labels: tlabels,
         datasets: [{
-            backgroundColor: "rgba(253, 128, 8, 0.2)",
-            borderColor: "rgba(253, 128, 8, 1)", // orange
+            backgroundColor: "rgba(" + SPEED_COLOR.join(",") + ", 0.2)",
+            borderColor: "rgba(" + SPEED_COLOR.join(",") + ", 1)", // orange
             borderWidth: 2,
             data: spd,
             label: SPEED.replaceAll("_", " "),
@@ -202,8 +190,8 @@ function buildSpeedAltChart() {
             tension: 0,
             yAxisID: "y",
         }, {
-            backgroundColor: "rgba(15, 128, 255, 0.2)",
-            borderColor: "rgba(15, 128, 255, 1)", // blue
+            backgroundColor: "rgba(" + ALTITUDE_COLOR.join(",") + ", 0.2)",
+            borderColor: "rgba(" + ALTITUDE_COLOR.join(",") + ", 1)", // blue
             borderWidth: 2,
             data: alt,
             label: ALTITUDE.replaceAll("_", " "),
@@ -212,6 +200,24 @@ function buildSpeedAltChart() {
             yAxisID: "y1",
         }]
     };
+
+    const zoomOptions = {
+      zoom: {
+        mode: "x",
+        drag: {
+          enabled: true,
+          borderColor: "rgb(" + AIRCRAFT_COLOR + ")", // "rgb(54, 162, 235)"
+          borderWidth: 1,
+          backgroundColor: "rgba(" + AIRCRAFT_COLOR + ", 0.3)"
+        }
+      },
+      pan: {
+        enabled: true,
+        mode: "x",
+        modifierKey: "shift",
+      }
+    };
+
     const config = {
         type: "line",
         plugins: [{ // https://stackoverflow.com/questions/68058199/chartjs-need-help-on-drawing-a-vertical-line-when-hovering-cursor
@@ -225,7 +231,7 @@ function buildSpeedAltChart() {
                     ctx.moveTo(x, yAxis.top);
                     ctx.lineTo(x, yAxis.bottom);
                     ctx.lineWidth = 1;
-                    ctx.strokeStyle = "rgba(0, 0, 255, 0.4)";
+                    ctx.strokeStyle = CHART_CURSOR_COLOR;
                     ctx.stroke();
                     ctx.restore();
                 }
@@ -240,7 +246,7 @@ function buildSpeedAltChart() {
                 // get index for value
                 // index = mainChart.scales.x.getValueForPixel(canvasPosition.x);
                 const value = mainChart.scales.x.getValueForPixel(canvasPosition.x);
-                const index = get_index_for_value(tlabels, value);
+                const index = indexForValue(tlabels, value);
                 // console.log("main", canvasPosition, value, index);
                 moveMapCursor(index);
             },
@@ -256,10 +262,10 @@ function buildSpeedAltChart() {
                 tooltip: {
                     callbacks: {
                         label: function(context) {
-                            let label = context.dataset.label || '';
+                            let label = context.dataset.label || "";
 
                             if (label) {
-                                label += ': ';
+                                label += ": ";
                             }
                             if (context.parsed.y !== null) {
                                 if (context.dataset.label == SPEED.replaceAll("_", " ")) {
@@ -332,7 +338,6 @@ function buildSpeedAltChart() {
         mainChart.resetZoom();
     });
     container.appendChild(button);
-
 }
 
 function buildOtherCharts() {
@@ -341,7 +346,7 @@ function buildOtherCharts() {
     let title = []
     while (i < chartCandidates.length) {
         let label = chartCandidates[i];
-        let data = get_property_values(label);
+        let data = propertyValues(label);
         title.push(label.replaceAll("_", " "))
         datasets.push({
             backgroundColor: chartColor(i) + "60", // transparency
@@ -386,7 +391,7 @@ function addChart(title, datasets) {
                     ctx.moveTo(x, yAxis.top);
                     ctx.lineTo(x, yAxis.bottom);
                     ctx.lineWidth = 1;
-                    ctx.strokeStyle = "rgba(0, 0, 255, 0.4)";
+                    ctx.strokeStyle = CHART_CURSOR_COLOR;
                     ctx.stroke();
                     ctx.restore();
                 }
@@ -404,7 +409,7 @@ function addChart(title, datasets) {
                 // get index for value
                 // index = mainChart.scales.x.getValueForPixel(canvasPosition.x);
                 const value = mainChart.scales.x.getValueForPixel(canvasPosition.x);
-                const index = get_index_for_value(tlabels, value);
+                const index = indexForValue(tlabels, value);
                 // console.log("other", chartId, canvasPosition, index);
                 moveMapCursor(index);
             },
@@ -428,7 +433,10 @@ function addChart(title, datasets) {
             }
         },
     };
-    if (MAX_DATA_PER_CHART == 2 && datasets.length == 2) {
+    if (datasets.length == 2) {
+        if (config["data"]["datasets"][1]["yAxisID"] == "y") { // forces second scale
+            config["data"]["datasets"][1]["yAxisID"] = "y1"
+        }        
         let before = config["options"]["scales"] ? config["options"]["scales"] : {}
         config["options"]["scales"] = Object.assign({}, before, {
                 y: {
@@ -481,19 +489,24 @@ function convertRadiansToDegrees(radians) {
     return radians * (180 / Math.PI);
 }
 
-function bearing(src, dst) {
-    if (src == undefined || dst == undefined) {
-        console.log("warning", src, dst);
-        return 0;
+function aircraftPosition(idx) {
+    if (idx == undefined) {
+        console.log("warning", idx);
+        return;
     }
-    lat1 = convertDegreesToRadians(src.geometry.coordinates[1])
-    lon1 = convertDegreesToRadians(src.geometry.coordinates[0])
-    lat2 = convertDegreesToRadians(dst.geometry.coordinates[1])
-    lon2 = convertDegreesToRadians(dst.geometry.coordinates[0])
-    y = Math.sin(lon2 - lon1) * Math.cos(lat2);
-    x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1);
-    t = Math.atan2(y, x);
-    return convertRadiansToDegrees(t);
+    let pos = latlngs[idx];
+    let orient = orients[idx];
+    return pos + orients;
+}
+
+function tracking(src, dst) {
+    let lat1 = convertDegreesToRadians(src[0])
+    let lon1 = convertDegreesToRadians(src[1])
+    let lat2 = convertDegreesToRadians(dst[0])
+    let lon2 = convertDegreesToRadians(dst[1])
+    let y = Math.sin(lon2 - lon1) * Math.cos(lat2);
+    let x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1);
+    return convertRadiansToDegrees(Math.atan2(y, x));
 }
 
 function moveMapCursor(idx) {
@@ -501,13 +514,12 @@ function moveMapCursor(idx) {
         console.log("warning", idx);
         return;
     }
-    let rot = bearing(geojson.features[idx], geojson.features[idx+1]) + AIRCRAFT_ICON_ROTATION;
+    let rot = tracking(latlngs[idx], latlngs[idx+1]) + AIRCRAFT_ICON_ROTATION;
     mapCursor.setLatLng(latlngs[idx]);
     mapCursor._icon.style.transformOrigin = Math.round(AIRCRAFT_ICON_SIZE/2) + "px " +
                                             Math.round(AIRCRAFT_ICON_SIZE/2) + "px";
-    mapCursor._icon.style.transform += ' rotateZ(' + Math.round(rot) + 'deg)';
+    mapCursor._icon.style.transform += " rotateZ(" + Math.round(rot) + "deg)";
     // console.log(mapCursor._icon.style.transform);
-
 }
 
 function moveChartCursor(idx) {
@@ -519,7 +531,7 @@ function moveChartCursor(idx) {
     ctx.moveTo(x, yAxis.top);
     ctx.lineTo(x, yAxis.bottom);
     ctx.lineWidth = 1;
-    ctx.strokeStyle = "rgba(0, 0, 255, 0.4)";
+    ctx.strokeStyle = CHART_CURSOR_COLOR;
     ctx.stroke();
     ctx.restore();
     Object.values(otherCharts).forEach( (chart) => {
@@ -531,7 +543,7 @@ function moveChartCursor(idx) {
         ctx.moveTo(x, yAxis.top);
         ctx.lineTo(x, yAxis.bottom);
         ctx.lineWidth = 1;
-        ctx.strokeStyle = "rgba(0, 0, 255, 0.4)";
+        ctx.strokeStyle = CHART_CURSOR_COLOR;
         ctx.stroke();
         ctx.restore();
     })
@@ -539,46 +551,46 @@ function moveChartCursor(idx) {
 
 function chartColor(idx) {
     const COLORS = [
-        '#e6194b',
-        '#3cb44b',
-        '#ffe119',
-        '#4363d8',
-        '#f58231',
-        '#911eb4',
-        '#46f0f0',
-        '#f032e6',
-        '#bcf60c',
-        '#fabebe',
-        '#008080',
-        '#e6beff',
-        '#9a6324',
-        '#fffac8',
-        '#800000',
-        '#aaffc3',
-        '#808000',
-        '#ffd8b1',
-        '#000075',
-        '#808080',
-        '#ffffff',
-        '#000000'
+        "#e6194b",
+        "#3cb44b",
+        "#ffe119",
+        "#4363d8",
+        "#f58231",
+        "#911eb4",
+        "#46f0f0",
+        "#f032e6",
+        "#bcf60c",
+        "#fabebe",
+        "#008080",
+        "#e6beff",
+        "#9a6324",
+        "#fffac8",
+        "#800000",
+        "#aaffc3",
+        "#808000",
+        "#ffd8b1",
+        "#000075",
+        "#808080",
+        "#ffffff",
+        "#000000"
     ];
     return COLORS[idx % COLORS.length];
 }
 
 // Action!
 //
-document.documentElement.addEventListener('dragover', (e) => {
+document.documentElement.addEventListener("dragover", (e) => {
     e.preventDefault();
-    document.body.classList.add('dragging');
+    document.body.classList.add("dragging");
 });
 
-document.documentElement.addEventListener('dragleave', () => {
-    document.body.classList.remove('dragging');
+document.documentElement.addEventListener("dragleave", () => {
+    document.body.classList.remove("dragging");
 });
 
-document.documentElement.addEventListener('drop', (e) => {
+document.documentElement.addEventListener("drop", (e) => {
     e.preventDefault();
-    document.body.classList.remove('dragging');
+    document.body.classList.remove("dragging");
     let fr = new FileReader();
     fr.onload = function() {
         buildMap(fr.result);
