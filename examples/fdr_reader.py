@@ -2,6 +2,7 @@ import sys
 import json
 from datetime import datetime, timedelta, timezone
 from pprint import pprint
+from enum import Enum
 from traceback import print_exc
 
 from PI_fdr import FDRData  # used in eval(), FDRData is a @dataclass
@@ -51,6 +52,13 @@ def best_type(s) -> int | float | str:
     except ValueError:
       pass
   return s
+
+
+class FDR_STDOUT(Enum):
+  NONE = set()
+  MIN = {"ground_speed", "altitude"}
+  STD = {"ground_speed", "altitude", "heading", "pitch", "roll"}
+  ALL = None
 
 
 class FDRReader:
@@ -188,12 +196,17 @@ class FDRReader:
         props[dref] = best_type(v)
     return props # {self.header[i]: float(data[i].strip()) for i in range(1, len(data))}
 
-  def to_geojson(self, outfile: str, altitude: bool = False, all_properties: bool = False):
+  def to_geojson(self, outfile: str, altitude: bool = False, properties: FDR_STDOUT | set | None = None):
     # Assumes all data are float except first one that is a timestamp
     # TS is datetime.now(datetime.UTC).strftime("%H:%M:%S.%f, ")
     features = []
     lines = []
     feature_index = 0
+    if properties is None:
+      properties = set(self.fdr_data.keys())  # all of them
+    elif type(properties) is FDR_STDOUT:
+      properties = properties.value
+    properties = {p for p in properties if p in self.fdr_data}  # keeep those that exists
     for row in self.data:
       # coordinates
       p = [float(row[1]), float(row[2])]
@@ -214,17 +227,13 @@ class FDRReader:
       ts = ts.replace(tzinfo=timezone.utc, day=self.basedate.day, month=self.basedate.month, year=self.basedate.year)
       # properties
       props = {"id": feature_index, self.header[0]: ts.isoformat(), "_raw_ts": ts.timestamp()}
-      if all_properties:
-        props = props | self.properties(row[1:])
-      else:
-        spd = self.fdr_data.get("ground_speed")  # derivative, for information only
-        if spd is not None:
-          props = props | {"speed": float(row[spd.data_index]) }
-        hdg = self.fdr_data.get("heading")  # derivative, for information only
-        if hdg is not None:
-          props = props | {"heading": float(row[hdg.data_index]) }
-        if alt is not None:
-          props = props | {"altitude":  alt}
+
+      for prop in properties:
+          data = self.fdr_data.get(prop)
+          if data is None:
+            continue
+          data_index = data.data_index
+          props = props | { prop: best_type(row[data_index]) }
       # feature
       features.append({
         "type": "Feature",
@@ -247,9 +256,27 @@ class FDRReader:
         "coordinates": lines
       },
       "properties": {
-        "name": "whole flight"
+        "name": "flight path"
       }
      })
+    # if 3D, add draped polygon
+    if altitude:
+      AIRPORT_ALT = min([a[2] for a in lines])
+      ground = [[l[0], l[1], AIRPORT_ALT] for l in lines[::-1]]
+      polygon = lines + ground
+      polygon.append(lines[0])  # close it
+      feature_index += 1
+      features.append({
+        "type": "Feature",
+        "id": feature_index,
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [polygon]
+        },
+        "properties": {
+          "name": "draped flight path"
+        }
+       })
 
     with open(outfile, "w") as geoj:
         json.dump({
@@ -257,15 +284,24 @@ class FDRReader:
           "features": features
         }, geoj, indent=4)
 
-  def to_csv(self, outfile: str, all_properties: bool = False):
+  def to_csv(self, outfile: str, properties: set | None = None):
+    if properties is None:
+      properties = set(self.fdr_data.keys())  # all of them
+    elif type(properties) is FDR_STDOUT:
+      properties = properties.value
+    else:
+      properties.add("latitude")
+      properties.add("longitude")
+    properties = {p for p in properties if p in self.fdr_data}  # keeep those that exists
     with open(outfile, "w") as fp:
       # header
-      print(",".join(["_raw_utc_ts", "utc_time"] + [d for d in self.fdr_data]), file=fp)
+      print(",".join(["_raw_utc_ts", "utc_time"] + [d for d in self.fdr_data if d in properties]), file=fp)
       # data
       for row in self.data:
         ts = datetime.strptime(row[0].strip(), "%H:%M:%S.%f")
         ts = ts.replace(tzinfo=timezone.utc, day=self.basedate.day, month=self.basedate.month, year=self.basedate.year)
-        print(",".join([str(ts.timestamp())]+row), file=fp)
+        frow = [row[f.data_index] for f in self.fdr_data.values() if f.name in properties]
+        print(",".join([str(ts.timestamp()), row[0]]+frow), file=fp)
 
 # ######################################################
 #
@@ -277,6 +313,7 @@ if __name__ == "__main__":
         # print("Fields:", a.header)
         pprint(a.meta, width=120)
         a.to_geojson(outfile=f"{file}.geojson", altitude=True)
+        a.to_csv(outfile=f"{file}.csv")
         print(f"{file}: {a.length} points written, duration={a.duration}")
       else:
         print(f"{file}: failed to parse")
@@ -285,8 +322,9 @@ if __name__ == "__main__":
       if a.parse():
         # print("Fields:", a.header)
         pprint(a.meta, width=120)
-        a.to_geojson(outfile="out.geojson", altitude=True, all_properties=True)
-        a.to_csv(outfile="out.csv", all_properties=True)
-        print(f"out.geojson: {a.length} points written, duration={a.duration}")
+        props = set() # FDR_STDOUT.STD  # {"altitude"}
+        a.to_geojson(outfile="out.geojson", altitude=True, properties=props)
+        a.to_csv(outfile="out.csv", properties=props)
+        print(f"{a.length} points written, duration={a.duration}")
       else:
         print("failed to parse")
