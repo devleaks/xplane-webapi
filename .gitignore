@@ -164,3 +164,4 @@ examples/out.fdr
 *.geojson
 /examples/3Dviewer/docs
 examples/out.csv
+/examples/fdr_viewer/docs
