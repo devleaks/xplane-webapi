@@ -7,9 +7,21 @@
 <script src="chartjs/chartjs-adapter-luxon.umd.js"></script>
 <script src="chartjs/chartjs-plugin-zoom.js"></script>
 <style>
-#map { height: 500px; }
-#charts { height: 200px; }
-#zoom_container {
+body {
+    background-repeat:no-repeat;
+    background-position: center center;
+    background-image: url(media/welcome-on.png);
+}
+body.dragging {
+    background-image: url(media/welcome-off.png);
+}
+#map {
+    height: 500px;
+}
+#charts {
+    height: 200px;
+}
+#buttons_container {
   display: flex;
   justify-content: center;
   align-items: center;
@@ -17,15 +29,15 @@
 </style>
 </head>
 <body>
-    <div id="menu">
-        <input type="file" name="geojsonfile" id="geojsonfile">
-    </div>
     <div id="map"></div>
     <div id="charts">
         <canvas id="mainChart"></canvas>
-        <div id="zoom_container"></div>
+        <div id="buttons_container"></div>
+        <!-- additional charts will come here -->
     </div>        
 <script language="javascript">
+// File types for FDR: GeoJSON
+const ALLOWED_FILE_TYPES = ["application/json", "application/geo+json"]
 // Each point in the geojson file will be represented by this almost transparent icon.
 // The goal is to provide interactivity and react when the icon is hover'ed.
 // If number of point exceeds a threshold, a sampling should be used.
@@ -39,10 +51,12 @@ const TRANSPARENT_ICON = L.icon({
 });
 
 // This icon represents the position of the aircraft in the analysis.
+// (silhouette of a A320)
 const AIRCRAFT_ICON_SIZE = 32
 const AIRCRAFT_ICON_ROTATION = 0  // deg
+const AIRCRAFT_COLOR = [0, 0, 192].join("%2C")
 const AIRCRAFT_ICON = L.icon({
-    iconUrl: "data:image/svg+xml,%3Csvg width%3D%22100%25%22 height%3D%22100%25%22 viewBox%3D%220 0 826 826%22 version%3D%221.1%22 xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22 xmlns%3Axlink%3D%22http%3A%2F%2Fwww.w3.org%2F1999%2Fxlink%22 xml%3Aspace%3D%22preserve%22 xmlns%3Aserif%3D%22http%3A%2F%2Fwww.serif.com%2F%22 style%3D%22fill-rule%3Aevenodd%3Bclip-rule%3Aevenodd%3Bstroke-linejoin%3Around%3Bstroke-miterlimit%3A2%3B%22%3E%3Cg transform%3D%22matrix(1%2C0%2C0%2C1%2C416%2C79)%22%3E%3Cpath d%3D%22M-1.714%2C-0.336C8.374%2C-0.336 14.25%2C10.744 18.188%2C20.031C26.11%2C40.454 32%2C199.4 32%2C196C40.047%2C200.371 88%2C227 88%2C227C88%2C227 86.185%2C201.867 89%2C196C93.697%2C191.303 104.74%2C192.785 111.125%2C192.75L114.004%2C192.688C119.749%2C192.656 124.038%2C192.973 129%2C196C131.92%2C200.788 130.195%2C245.368 131%2C248C133.359%2C250.387 370.448%2C383.785 371.15%2C384.177C373.119%2C385.203 373.119%2C385.203 376%2C385L376.875%2C382.563C378%2C380 378%2C380 380%2C379C381.645%2C384.979 382.578%2C390.765 383.125%2C396.938L383.38%2C399.793C384.644%2C415.426 384.737%2C431.397 383%2C447L381%2C447C379.293%2C443.587 379.203%2C439.702 378.695%2C435.945C377.948%2C432.779 377.142%2C431.404 375%2C429C373.045%2C427.886 256.349%2C387.47 254%2C387C254%2C387 112.284%2C345.142 110%2C344C110%2C344 38.496%2C355.33 32%2C356.5C31.089%2C359.232 30.633%2C407.465 30.599%2C417.161C30.465%2C453.123 27.07%2C511.913 28%2C507C30.656%2C508.26 122%2C578 122%2C578C123.215%2C581.4 123.021%2C605.866 123%2C609C114.129%2C607.024 16.945%2C581.006 14%2C580C14%2C580 1.797%2C610.533 1.551%2C614.19L-3.952%2C654.387L-8.735%2C614.374C-8.735%2C614.374 -21%2C583 -21%2C581C-34.407%2C584.007 -128.884%2C609 -130%2C609C-129.889%2C604.999 -128.842%2C581.662 -128.842%2C581.662C-128.173%2C577.161 -37.267%2C508.996 -35.734%2C507.82C-35.74%2C505.243 -37.08%2C419.789 -37.069%2C413.562C-37.058%2C407.179 -37.021%2C368.971 -37%2C356.5C-40.759%2C355.213 -117%2C344 -117%2C344C-117%2C344 -262.876%2C387.164 -264.813%2C387.75C-264.813%2C387.75 -379.932%2C428.339 -383%2C430C-383.946%2C432.763 -384.653%2C435.29 -385.25%2C438.125L-385.773%2C440.41C-386.197%2C442.27 -386.601%2C444.135 -387%2C446L-388%2C446C-390.521%2C426.911 -390.852%2C408.209 -388.625%2C389.063L-388.243%2C385.757C-387.505%2C380.037 -387.505%2C380.037 -387%2C378L-385%2C377L-382%2C385C-378.78%2C384.195 -137.816%2C249.059 -137%2C247C-136.935%2C245.483 -137.568%2C199.751 -134.632%2C195.867C-128.769%2C191.707 -121%2C192.784 -114.063%2C192.75L-110.854%2C192.688C-104.771%2C192.657 -100.342%2C193.006 -95%2C196C-93%2C198 -92.959%2C222.715 -93%2C226C-85.091%2C222.166 -42%2C197 -38%2C197C-38%2C198.98 -33.461%2C46.277 -22%2C20.031C-22%2C20.031 -11.801%2C-0.336 -1.714%2C-0.336Z%22 style%3D%22fill%3Argb(1%2C1%2C1)%3Bfill-rule%3Anonzero%3B%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E",
+    iconUrl: "data:image/svg+xml,%3Csvg width%3D%22100%25%22 height%3D%22100%25%22 viewBox%3D%220 0 826 826%22 version%3D%221.1%22 xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22 xmlns%3Axlink%3D%22http%3A%2F%2Fwww.w3.org%2F1999%2Fxlink%22 xml%3Aspace%3D%22preserve%22 xmlns%3Aserif%3D%22http%3A%2F%2Fwww.serif.com%2F%22 style%3D%22fill-rule%3Aevenodd%3Bclip-rule%3Aevenodd%3Bstroke-linejoin%3Around%3Bstroke-miterlimit%3A2%3B%22%3E%3Cg transform%3D%22matrix(1%2C0%2C0%2C1%2C416%2C79)%22%3E%3Cpath d%3D%22M-1.714%2C-0.336C8.374%2C-0.336 14.25%2C10.744 18.188%2C20.031C26.11%2C40.454 32%2C199.4 32%2C196C40.047%2C200.371 88%2C227 88%2C227C88%2C227 86.185%2C201.867 89%2C196C93.697%2C191.303 104.74%2C192.785 111.125%2C192.75L114.004%2C192.688C119.749%2C192.656 124.038%2C192.973 129%2C196C131.92%2C200.788 130.195%2C245.368 131%2C248C133.359%2C250.387 370.448%2C383.785 371.15%2C384.177C373.119%2C385.203 373.119%2C385.203 376%2C385L376.875%2C382.563C378%2C380 378%2C380 380%2C379C381.645%2C384.979 382.578%2C390.765 383.125%2C396.938L383.38%2C399.793C384.644%2C415.426 384.737%2C431.397 383%2C447L381%2C447C379.293%2C443.587 379.203%2C439.702 378.695%2C435.945C377.948%2C432.779 377.142%2C431.404 375%2C429C373.045%2C427.886 256.349%2C387.47 254%2C387C254%2C387 112.284%2C345.142 110%2C344C110%2C344 38.496%2C355.33 32%2C356.5C31.089%2C359.232 30.633%2C407.465 30.599%2C417.161C30.465%2C453.123 27.07%2C511.913 28%2C507C30.656%2C508.26 122%2C578 122%2C578C123.215%2C581.4 123.021%2C605.866 123%2C609C114.129%2C607.024 16.945%2C581.006 14%2C580C14%2C580 1.797%2C610.533 1.551%2C614.19L-3.952%2C654.387L-8.735%2C614.374C-8.735%2C614.374 -21%2C583 -21%2C581C-34.407%2C584.007 -128.884%2C609 -130%2C609C-129.889%2C604.999 -128.842%2C581.662 -128.842%2C581.662C-128.173%2C577.161 -37.267%2C508.996 -35.734%2C507.82C-35.74%2C505.243 -37.08%2C419.789 -37.069%2C413.562C-37.058%2C407.179 -37.021%2C368.971 -37%2C356.5C-40.759%2C355.213 -117%2C344 -117%2C344C-117%2C344 -262.876%2C387.164 -264.813%2C387.75C-264.813%2C387.75 -379.932%2C428.339 -383%2C430C-383.946%2C432.763 -384.653%2C435.29 -385.25%2C438.125L-385.773%2C440.41C-386.197%2C442.27 -386.601%2C444.135 -387%2C446L-388%2C446C-390.521%2C426.911 -390.852%2C408.209 -388.625%2C389.063L-388.243%2C385.757C-387.505%2C380.037 -387.505%2C380.037 -387%2C378L-385%2C377L-382%2C385C-378.78%2C384.195 -137.816%2C249.059 -137%2C247C-136.935%2C245.483 -137.568%2C199.751 -134.632%2C195.867C-128.769%2C191.707 -121%2C192.784 -114.063%2C192.75L-110.854%2C192.688C-104.771%2C192.657 -100.342%2C193.006 -95%2C196C-93%2C198 -92.959%2C222.715 -93%2C226C-85.091%2C222.166 -42%2C197 -38%2C197C-38%2C198.98 -33.461%2C46.277 -22%2C20.031C-22%2C20.031 -11.801%2C-0.336 -1.714%2C-0.336Z%22 style%3D%22fill%3Argb("+AIRCRAFT_COLOR+")%3Bfill-rule%3Anonzero%3B%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E",
     iconSize: [AIRCRAFT_ICON_SIZE, AIRCRAFT_ICON_SIZE], // size of the icon
     iconAnchor: [Math.round(AIRCRAFT_ICON_SIZE/2), Math.round(AIRCRAFT_ICON_SIZE/2)], // point of the icon which will correspond to marker's location
     popupAnchor: [-(AIRCRAFT_ICON_SIZE+2), -(AIRCRAFT_ICON_SIZE+2)] // point from which the popup should open relative to the iconAnchor
@@ -66,7 +80,7 @@ const ALTITUDE_CONVERT = {
 };
 ALTITUDE_UNIT = "ft";
 
-// list of GeoJSON feature properties to ignore for charting
+// list of "additional" GeoJSON feature properties to ignore for charting
 const IGNORE = ["id", "UTC Time", "_raw_ts", "latitude", "longitude", SPEED, ALTITUDE];
 const MAX_DATA_PER_CHART = 4;  // number of curves per chart, 6 is reasonable max.
 
@@ -78,16 +92,10 @@ var tlabels = [];   // global (uniform) x-axis time ticks
 var mainChart = undefined; // for cursor positioning
 var mapCursor = undefined; // map cursor
 var otherCharts = {}; // for cursor positioning
-
 var chartCandidates = Array(); // additional charts to plot from properties
-chartCandidates.remove = function(what) {
-    const index = this.indexOf(what);
-    if (index > -1) {
-        this.splice(index, 1);
-    }
-}
 
 function buildMap(text) {
+    document.body.style["background-image"] = "none";
     geojson = JSON.parse(text);
     pointFeatures = geojson.features.filter((f) => f.geometry.type == "Point");
     latlngs = pointFeatures.map((f) => [f.geometry.coordinates[1], f.geometry.coordinates[0]]);
@@ -104,7 +112,7 @@ function buildMap(text) {
     // Start leaflet
     let avglat = pointFeatures.reduce( (acc, f) => acc + f.geometry.coordinates[1], 0) / pointFeatures.length;
     let avglon = pointFeatures.reduce( (acc, f) => acc + f.geometry.coordinates[0], 0) / pointFeatures.length;
-    console.log(avglat, avglon);
+    // console.log(avglat, avglon);
     let map = L.map("map").setView([avglat, avglon], 13);
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 18,
@@ -315,7 +323,7 @@ function buildSpeedAltChart() {
     const ctx = document.getElementById("mainChart");
     mainChart = new Chart(ctx, config);
 
-    const container = document.getElementById("zoom_container");
+    const container = document.getElementById("buttons_container");
     let button = document.createElement("button");
     button.type ="button";
     button.innerHTML = "Reset zoom";
@@ -336,8 +344,8 @@ function buildOtherCharts() {
         let data = get_property_values(label);
         title.push(label.replaceAll("_", " "))
         datasets.push({
-            backgroundColor: get_color(i) + "60", // transparency
-            borderColor: get_color(i),
+            backgroundColor: chartColor(i) + "60", // transparency
+            borderColor: chartColor(i),
             borderWidth: 2,
             data: data,
             label: label.replaceAll("_", " "),
@@ -499,6 +507,7 @@ function moveMapCursor(idx) {
                                             Math.round(AIRCRAFT_ICON_SIZE/2) + "px";
     mapCursor._icon.style.transform += ' rotateZ(' + Math.round(rot) + 'deg)';
     // console.log(mapCursor._icon.style.transform);
+
 }
 
 function moveChartCursor(idx) {
@@ -528,43 +537,59 @@ function moveChartCursor(idx) {
     })
 }
 
-COLORS = [
-    '#e6194b',
-    '#3cb44b',
-    '#ffe119',
-    '#4363d8',
-    '#f58231',
-    '#911eb4',
-    '#46f0f0',
-    '#f032e6',
-    '#bcf60c',
-    '#fabebe',
-    '#008080',
-    '#e6beff',
-    '#9a6324',
-    '#fffac8',
-    '#800000',
-    '#aaffc3',
-    '#808000',
-    '#ffd8b1',
-    '#000075',
-    '#808080',
-    '#ffffff',
-    '#000000'
-];
-
-function get_color(idx) {
+function chartColor(idx) {
+    const COLORS = [
+        '#e6194b',
+        '#3cb44b',
+        '#ffe119',
+        '#4363d8',
+        '#f58231',
+        '#911eb4',
+        '#46f0f0',
+        '#f032e6',
+        '#bcf60c',
+        '#fabebe',
+        '#008080',
+        '#e6beff',
+        '#9a6324',
+        '#fffac8',
+        '#800000',
+        '#aaffc3',
+        '#808000',
+        '#ffd8b1',
+        '#000075',
+        '#808080',
+        '#ffffff',
+        '#000000'
+    ];
     return COLORS[idx % COLORS.length];
 }
 
-document.getElementById("geojsonfile")
-    .addEventListener("change", function() {
-        let fr = new FileReader();
-        fr.onload = function() {
-            buildMap(fr.result);
-        };
-        fr.readAsText(this.files[0]);
-    });
+// Action!
+//
+document.documentElement.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    document.body.classList.add('dragging');
+});
+
+document.documentElement.addEventListener('dragleave', () => {
+    document.body.classList.remove('dragging');
+});
+
+document.documentElement.addEventListener('drop', (e) => {
+    e.preventDefault();
+    document.body.classList.remove('dragging');
+    let fr = new FileReader();
+    fr.onload = function() {
+        buildMap(fr.result);
+    };
+    if (ALLOWED_FILE_TYPES.indexOf(e.dataTransfer.files[0].type) > -1) {
+        fr.readAsText(e.dataTransfer.files[0]);
+    } else {
+        console.log("invalid file type", e.dataTransfer.files[0].type)        
+    }
+});
+
 </script>
 </body>
 </html>
