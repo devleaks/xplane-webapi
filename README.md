@@ -19,3 +19,11 @@ For development, add option `dev`:
 ```sh
 pip install 'xpwebapi[dev] @ git+https://github.com/devleaks/xplane-webapi.git'
 ```
+
+# See Also
+
+This project is obsolete.
+Please use the [documented](https://lyestarzalt.github.io/X-Plane-WebAPI-OpenAPI/)
+Open API reference](https://github.com/lyestarzalt/X-Plane-WebAPI-OpenAPI)
+and [Python generator](https://github.com/openapi-generators/openapi-python-client)
+to create Python API stubs.
